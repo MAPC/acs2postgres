@@ -43,11 +43,20 @@ Each table should have the LOGRECNO as the primary key. There are many tables wi
 
 All data can be found using the above links. This might have to change for previous years. Think about how to expand this to 
     make sure the various years are taken into account. 
+
+TODO: Create database upon creation of config file with the year
+TODO: Pass in database options to the config file and take them on the cmd
+CREATE DATABASE y2010
+  WITH ENCODING='LATIN1'
+       CONNECTION LIMIT=-1; 
 """
 
 
-import sys, argparse, psycopg2
+import sys, argparse
+import psycopg2, re
+from psycopg2 import ProgrammingError
 import ConfigParser, os, logging
+import xlrd
 from string import Template
 
 #Threading stuff to deal with downloading the zip files and unpacking them
@@ -56,7 +65,7 @@ from zipfile import ZipFile
 
 """This class unzips a file"""
 class ThreadUnzip(threading.Thread):
-    def __init__(self, queue, logger=None):
+    def __init__(self, queue):
         threading.Thread.__init__(self)
         self.queue = queue
     def run(self):
@@ -72,6 +81,158 @@ class ThreadUnzip(threading.Thread):
             zf.extractall(unzip_loc)
             zf.close()
             logging.info("Finished unzipping %s" % unzip_s)
+            self.queue.task_done()
+
+class Files():
+    def __init__(self, seq_file):
+        self.seq_file = seq_file
+        self.e_files = []
+        self.m_files = []
+    
+    @classmethod
+    def createTupples(cls, dict, seq_folder, folders=[]):
+        """This will take the seq_folder which should have SeqX.xls files
+        folders can be any number of folders but each one has to have the file structure
+        e*, m* and a single g* file. The list returned will be a list of
+        Files objects. The 'files' object will be a list of tupples, (e*, m*),
+        folder locations. Sequence files """
+        seq_re = re.compile(r"Seq(?P<id>\d+)\.xls")
+        e_re = re.compile(r"e(?P<year>\d+)%s%s(?P<id>\d+)\.txt" %
+                          ("5", dict["geo_lower"].split(".")[0]))
+        m_re = re.compile(r"m(?P<year>\d+)%s%s(?P<id>\d+)\.txt" %
+                          ("5", dict["geo_lower"].split(".")[0]))
+        g_re = re.compile(r"g(?P<year>\d+)%s%s\.txt" %
+                          ("5", dict["geo_lower"].split(".")[0]))
+        seqs = os.listdir(seq_folder)
+        folder_dict = {}
+        geo = []
+        
+        for seq in seqs:
+            s = seq_re.match(seq)
+            if s != None:
+                id = int(s.groups("id")[0])
+                folder_dict[id] = Files("%s/%s" % (seq_folder, seq))
+        
+        for f in folders:
+            files = os.listdir(f)
+            for file in files:
+                e = e_re.match(file)
+                m = m_re.match(file)
+                g = g_re.match(file)
+                
+                if e != None:
+                    id = int(e.groups()[1])/1000
+                    folder_dict[id].e_files.append("%s/%s" % (f, file))
+                elif m != None:
+                    id = int(m.groups()[1])/1000
+                    folder_dict[id].m_files.append("%s/%s" % (f, file))
+                elif g != None:
+                    geo.append(file)
+        return (folder_dict, geo)
+                        
+class ThreadFiles(threading.Thread):
+    def __init__(self, queue):
+        threading.Thread.__init__(self)
+        self.queue = queue
+        self.col_re = re.compile(r"(?P<table_name>\w+)_(?P<col_name>\d+)")
+        
+        """
+        try :
+            self.conn = psycopg2.connect(host="localhost", dbname="y2010", user="ben", password="password")
+            self.cur = self.conn.cursor()
+        except:
+            logging.critical("There was a problem logging into the db")
+            sys.exit(0)
+        """
+    
+    def execute(self, cmd):
+        try:
+            conn = psycopg2.connect(host="localhost", dbname="y2010", user="ben", password="password")
+            cur = conn.cursor()
+            cur.execute(cmd)
+            conn.commit()
+        except:
+            logging.error("A database operation failed. The command is: %s" % cmd)
+        try:
+            ret = cur.fetchall()
+            return ret
+        except ProgrammingError:
+            return None
+        conn.close()
+            
+    def createTable(self, tableName, pk_head, unique_head, other_head):
+        """
+        pk_head should be the form pk_name and is the primary key 
+        column. If None, an id field is automatically created. The type should either be
+        'serial' or 'integer'. DO NOT PK OFF OF A STRING.
+        
+        unique_head and other_head is of the form: (col name, type). Type can be any
+        valid db type. 
+        
+        unique_head is a list of unique key values. Note that id can be assumed to exist,
+        so long as pk_head contains id or is left blank.
+        """
+        if pk_head == None: pk_head = []
+        if unique_head == None: unique_head = []
+        if other_head == None: other_head = []
+        #print tableName, pk_head, unique_head, other_head
+        
+        self.execute("DROP TABLE %s CASCADE;" % tableName)
+        
+        cmd_str = "CREATE TABLE %s (" % tableName
+        if pk_head != None:
+            cmd_str = "%s %s %s, " % (cmd_str, pk_head[0], pk_head[1])
+        else:
+            cmd_str = "%s id serial, " % cmd_str
+        
+        for h, t in unique_head:
+            cmd_str = "%s _%s %s, " % (cmd_str, h, t)
+        
+        for h, t in other_head:
+            cmd_str = "%s _%s %s, " % (cmd_str, h, t)
+        
+        if len(unique_head) != 0:
+            cmd_str = "%s UNIQUE( " % cmd_str
+            for h, t in unique_head:
+                cmd_str = "%s %s, " % (cmd_str, h)
+            cmd_str = cmd_str.rstrip(",")
+            cmd_str = "%s ) " % cmd_str
+        cmd_str = cmd_str.rstrip(" ,") + (");")
+        self.execute(cmd_str)
+    
+    def run(self):
+        #This is always true because the queue.get command will raise an exception if empty 
+        while True:
+            files = self.queue.get()
+            book = xlrd.open_workbook(files.seq_file)
+            #There are always two sheats, E and M. They are exactly the same
+            #print len(book.sheets())
+            sheet = book.sheets()[0]
+            dict_cols = {"all" : {}}
+            csv_headers = []
+            for col in range(sheet.ncols):
+                csv_headers.append(sheet.cell(0, col).value)
+                m = self.col_re.match(sheet.cell(0, col).value)
+                if m == None:
+                    dict_cols["all"][sheet.cell(0, col).value] = sheet.cell(1, col).value
+                else:
+                    #Use the fact that if the table_name is not in the dictionary yet
+                    #maping csv and header information is non trivial. Multiple tables with a main
+                    # make this a pain. Try to only work with say, 2000k inserts at a time. 
+                    if m.group("table_name") not in dict_cols.keys():
+                        dict_cols[m.group("table_name")] = {}
+                    dict_cols[m.group("table_name")][m.group("col_name")] = sheet.cell(1, col).value
+            pk = None
+            if "LOGRECNO" in dict_cols["all"].keys():
+                pk = ("LOGRECNO", "integer")
+
+            for key in dict_cols.keys():
+                if (key == "all"): continue
+                col_names = []
+                for k in sorted(dict_cols[key].keys()):
+                    col_names.append((k, "varchar(255)"))
+                self.createTable("%s_meta" % key, pk, None, col_names)
+            
             self.queue.task_done()
             
 CONFIG_FORMAT = Template("""
@@ -133,9 +294,9 @@ DATADIR=$data_dir
 """)
 
 def setupLog(logFile, verbose):
+    verbose = int(verbose)
     if verbose == -1:
         verbose = 3
-    verbose = int(verbose)
     fmt="%(asctime)s %(levelname)s: %(message)s"
     level = None
     if verbose == 1:
@@ -202,6 +363,15 @@ def unpackFiles(config_dict):
     queue.put("%s/%s" % (config_dict["data_dir"], config_dict["zip1"]))
     queue.put("%s/%s" % (config_dict["data_dir"], config_dict["zip2"]))
     queue.put("%s/%s" % (config_dict["data_dir"], config_dict["sumFileTemp"]))
+    queue.join()
+
+def putIntoDB(folder_dict, geo):
+    queue = Queue.Queue()
+    for i in range(5):
+        t = ThreadFiles(queue)
+        t.setDaemon(True)
+        t.start()
+    queue.put(folder_dict[1])
     queue.join()
         
 def parseArgs(argv):
@@ -302,8 +472,15 @@ to log at the info level.
         #get the zip files from the ftp
         #unpack the zips
         logging.info("unpacking zip files")
-        unpackFiles(config_dict)
+        #unpackFiles(config_dict)
         logging.info("finished unpacking zip files")
+        
+        data_base = config_dict["data_dir"]
+        template = "%s/%s" % (data_base, config_dict["sumFileTemp"].split(".")[0])
+        folder1 = "%s/%s" % (data_base, config_dict["zip1"].split(".")[0])
+        folder2 = "%s/%s" % (data_base, config_dict["zip2"].split(".")[0])
+        folder_dict, geo = Files.createTupples(config_dict, template, [folder1, folder2])
+        putIntoDB(folder_dict, geo)
         #get the zip files into a database
         #1) Pass the config file
         #2) List all of the file names
@@ -315,66 +492,7 @@ to log at the info level.
 
 def main(argv):
     parseArgs(sys.argv)
-
 main(sys.argv)
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
+
+
+
