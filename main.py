@@ -290,22 +290,25 @@ class ThreadFiles(threading.Thread):
                 headers.append((self.colName(col), colType))
             self.createTable( table, ok_head, None, headers )
             
+    def batchInsert(self, data, table_suffix, dict_cols):
+        logging.debug("Pushing data")
+        for tableName in data.keys():
+            col_names = []
+            col_names.append("LOGRECNO") #TODO: somehow make this not a static value
+            
+            for col_name in sorted(dict_cols[tableName].keys()):
+                col_names.append(self.colName(col_name))
+            logging.info("Inserting data to table: %s_%s" % (tableName, table_suffix))
+            self.insert("%s_%s" % (tableName, table_suffix), col_names, data[tableName] )
+        data = {}
+        logging.debug("Finishing pushing data")
+            
     def insertDataFromFile(self, file_handle, table_suffix, dict_cols, files, col_seperators):
         data = {}
         counter = 1
         for e_line in file_handle.readlines():
             if counter%200 == 0:
-                logging.debug("Pushing data")
-                for tableName in data.keys():
-                    col_names = []
-                    col_names.append("LOGRECNO") #TODO: somehow make this not a static value
-                    
-                    for col_name in sorted(dict_cols[tableName].keys()):
-                        col_names.append(self.colName(col_name))
-                    logging.info("Inserting data to table: %s_%s" % (tableName, table_suffix))
-                    self.insert("%s_%s" % (tableName, table_suffix), col_names, data[tableName] )
-                data = {}
-                logging.debug("Finishing pushing data")
+                self.batchInsert(data, table_suffix, dict_cols)
             
             e_line = e_line.split(",")
             for table_name in dict_cols.keys():
@@ -321,6 +324,8 @@ class ThreadFiles(threading.Thread):
                               ( table_name, len(data_line), len(dict_cols[table_name].keys())+1 ))
                 data[table_name].append(data_line)
             counter = counter + 1
+        self.batchInsert(data, table_suffix, dict_cols)
+        
     
     def insertTableData(self, dict_cols, files, col_seperators):
         for x in range(len(files.e_files)):
