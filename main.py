@@ -1,56 +1,3 @@
-"""
-ftp://ftp.census.gov/
-acs2010_5yr/ - where the filename is acsYYYY_5yr
-summaryfile/(YYYY-4)-YYYY_ACSSF_By_State_All_Tables/
-ls Mass*
-
-grab these two files, unzip them
- 
- next
- ftp://ftp.census.gov/
- acsYYYY_5yr/summaryfile/UserTools/
- YYYY_SummaryFileTemplates.zip
- 
- read this: http://www2.census.gov/acs2010_5yr/summaryfile/ACS_2006-2010_SF_Tech_Doc.pdf
- 
- according to this documentation p13 (11) figure out fixed width columns so header for the g* file 
- 1 geo table
- 
- 
- e* and m* csv files are related
- header for e* and m* located in \2010_SummaryFileTemplates where Seq#.xls is linked to e*ma#000.csv   
- 
- ftp://ftp.census.gov/
- acsYYYY_5yr/summaryfile/UserTools/Geography/
- get either ma.xls or MA.xls
- 
- ftp://ftp.census.gov/acs2010_5yr/summaryfile/2006-2010_ACSSF_By_State_All_Tables/Massachusetts_Tracts_Block_Groups_Only.zip
- ftp://ftp.census.gov/acs2010_5yr/summaryfile/2006-2010_ACSSF_By_State_All_Tables/Massachusetts_All_Geographies_Not_Tracts_Block_Groups.zip
- 
- 
- When creating tables use the B##### C##### not including _AAA. The AAA corresponds to a type of column. 
- The type of column is going to be put into a meta field, so dictionary. The estimator files are going to populate the _AAA fields.
- This will be joined with the m* file to population the _AAA_means file. The geo table needs to be joined on the geo db. 
- 
- Order to do this in so far:
- Figure out a way to download from the FTP the various files. 
- Unzip the various files
- Figure out a way to dict up all of the tables and create them all in one go, note that this might have
-     to be done very carefully. The dictionaries could become huge. Be careful of this. 
-     
-Each table should have the LOGRECNO as the primary key. There are many tables within a spreadsheet with many columns.
-    Again, be very careful about how to organize this.  
-
-All data can be found using the above links. This might have to change for previous years. Think about how to expand this to 
-    make sure the various years are taken into account. 
-
-TODO: Create database upon creation of config file with the year
-TODO: Pass in database options to the config file and take them on the cmd
-CREATE DATABASE y2010
-  WITH ENCODING='LATIN1'
-       CONNECTION LIMIT=-1; 
-"""
-
 
 import sys, argparse
 import psycopg2, re
@@ -147,17 +94,19 @@ class ThreadFiles(threading.Thread):
     
     def execute(self, cmd):
         try:
-            conn = psycopg2.connect(host="localhost", dbname="y2010", user="ben", password="password")
+            conn = psycopg2.connect(host="localhost", database="y2010", user="ben", password="password")
             cur = conn.cursor()
             cur.execute(cmd)
             conn.commit()
-        except:
-            logging.error("A database operation failed. The command is: %s" % cmd)
+        except Exception, e:
+            logging.error("A database operation failed. The error is: %s. \nThe command is: %s" % (e,cmd))
+            return None
+        
         try:
             ret = cur.fetchall()
             return ret
         except ProgrammingError:
-            return None
+            return []
         conn.close()
             
     def createTable(self, tableName, pk_head, unique_head, other_head):
@@ -176,20 +125,23 @@ class ThreadFiles(threading.Thread):
         if unique_head == None: unique_head = []
         if other_head == None: other_head = []
         #print tableName, pk_head, unique_head, other_head
-        
-        self.execute("DROP TABLE %s CASCADE;" % tableName)
+        logging.info("Trying to drop table %s" % tableName)
+        if self.execute("DROP TABLE %s CASCADE;" % tableName) == None:
+            logging.error("Dropping table %s failed" % tableName)
+        else:
+            logging.info("dropped table %s" % tableName)
         
         cmd_str = "CREATE TABLE %s (" % tableName
-        if pk_head != None:
-            cmd_str = "%s %s %s, " % (cmd_str, pk_head[0], pk_head[1])
+        if len(pk_head) != 0:
+            cmd_str = "%s %s %s primary key, " % (cmd_str, pk_head[0], pk_head[1])
         else:
-            cmd_str = "%s id serial, " % cmd_str
+            cmd_str = "%s id serial primary key, " % cmd_str
         
         for h, t in unique_head:
-            cmd_str = "%s _%s %s, " % (cmd_str, h, t)
+            cmd_str = "%s %s %s, " % (cmd_str, h, t)
         
         for h, t in other_head:
-            cmd_str = "%s _%s %s, " % (cmd_str, h, t)
+            cmd_str = "%s %s %s, " % (cmd_str, h, t)
         
         if len(unique_head) != 0:
             cmd_str = "%s UNIQUE( " % cmd_str
@@ -198,7 +150,184 @@ class ThreadFiles(threading.Thread):
             cmd_str = cmd_str.rstrip(",")
             cmd_str = "%s ) " % cmd_str
         cmd_str = cmd_str.rstrip(" ,") + (");")
-        self.execute(cmd_str)
+        logging.info("Trying to create table: %s" % tableName)
+        if self.execute(cmd_str) == None:
+            logging.error("Failed to create table: %s" % tableName)
+        else: 
+            logging.info("Created table: %s" % tableName)
+    def clean(self, text):
+        if len(text) == 0:
+            return "NULL"
+        elif (text.strip() == '.'):
+            return "E'0'" #In the CSV files a 0 is represented by a '.', it should be 0
+        else:
+            text = text.replace("%", "\\%")
+            text = text.replace("'", "\\'")
+            return "E'%s'" % text
+    
+    def colName(self, text):
+        try:
+            ret = int(text)
+            return ("_%s" % text)
+        except ValueError:
+            return(text)
+    
+    def insert(self, table, col_names=[], data=[] ):
+        """
+        insert will run: insert into table (col_names) values data
+        All of the data is wrapped in quotes and escaped. Postgeres is nice in that
+        it allows numbers to be wrapped in quotes as still enter as a number if the column name.
+        data needs to be in a matrix format with one entry for each column provided to col_names.
+        """
+        cmd_str = "INSERT INTO %s (" % table
+        for col in col_names:
+            cmd_str = "%s%s, " % (cmd_str, col)
+        cmd_str = cmd_str.rstrip(", ") + ") VALUES "
+        
+        for row in data:
+            cmd_str = "%s (" % cmd_str
+            for col in row:
+                cmd_str = "%s%s, " % (cmd_str, self.clean(col))
+            cmd_str = cmd_str.rstrip(", ") + "),\n"
+        cmd_str =  cmd_str.rstrip(",\n") + ";" 
+        
+        logging.debug("Running insert cmd")
+        if self.execute(cmd_str) == None:
+            logging.error("Insert command failed")
+        logging.debug("Insert cmd succeeded")
+    
+    def createMetaTables(self, dict_cols):
+        for key in dict_cols.keys():
+            if (key == "all"): continue
+            
+            table = "%s_meta" % key
+            self.createTable( table, None, None, [("header", "varchar(10)"), ("description", "varchar(255)")] )
+            
+            data = []
+            for k in sorted(dict_cols[key].keys()):
+                data.append([k, dict_cols[key][k][0]])
+            self.insert(table, ["header", "description"], data)
+    
+    def columnTypes(self, dict_cols, files):
+        """
+        This will go through each of the e files and try to decern which db type
+        the column is suppose to be and return the headerType dictionary keyed
+        to column index. 
+        """
+        headerType = {}
+        for e_file in files.e_files:
+            f = open(e_file, "r")
+            line = f.readline()
+            f.close()
+            line = line.split(",")
+            x = 0
+            """
+            This is a bit confusing. The hirerarcy needs to be float -> int -> string
+            If in one file the column is an int but in another, that same column is a float,
+            the  column needs to be a float. The first file will be read into the 'else' section
+            and the subsequent files are in the "if" section. 
+            
+            The 'else' section will go through and best guess the data type. The 'if' section
+            will change the datatype if the need arises. 
+            
+            """
+            for cell in line:
+                if x in headerType.keys():
+                    if len(cell) == 0:
+                        #no information given about the data type, should assume string
+                        continue
+                    else:
+                        try:
+                            ret = int(cell)
+                            if headerType[x] == "null":
+                                headerType[x] = "integer"
+                            #if it's an integer don't change it, if it's a float don't change it
+                        except ValueError:
+                            #always turn it to a float.
+                            headerType[x] = "float"
+                else:
+                    if len(cell) == 0:
+                        headerType[x] = "null"
+                    else:
+                        try:
+                            ret = int(cell)
+                            headerType[x] = "integer"
+                        except ValueError:
+                            headerType[x] = "float"
+                x = x + 1
+        return headerType
+                
+    
+    def createTables(self, dict_cols, files):
+        #pk_logRecNo tells if the table in pk_logRecNo
+        ok_head = None
+        if "LOGRECNO" in dict_cols["all"].keys():
+            ok_head = ("LOGRECNO", "integer")
+        
+        colTypes = self.columnTypes(dict_cols, files)
+        
+        for key in dict_cols.keys():
+            if (key == "all"): continue
+            
+            #create the e table
+            table = "%s_e" % key
+            headers = []
+            for col in sorted(dict_cols[key].keys()): 
+                colType = colTypes[dict_cols[key][col][1]]
+                if colType == "null":
+                    colType = "varchar(255)"
+                headers.append((self.colName(col), colType))
+                
+            self.createTable( table, ok_head, None, headers )
+            
+            #create the m table
+            table = "%s_m" % key
+            headers = []
+            for col in sorted(dict_cols[key].keys()): 
+                colType = colTypes[dict_cols[key][col][1]]
+                if colType == "null":
+                    colType = "varchar(255)"
+                headers.append((self.colName(col), colType))
+            self.createTable( table, ok_head, None, headers )
+            
+    def insertDataFromFile(self, file_handle, table_suffix, dict_cols, files, col_seperators):
+        data = {}
+        counter = 1
+        for e_line in file_handle.readlines():
+            if counter%200 == 0:
+                logging.debug("Pushing data")
+                for tableName in data.keys():
+                    col_names = []
+                    col_names.append("LOGRECNO") #TODO: somehow make this not a static value
+                    
+                    for col_name in sorted(dict_cols[tableName].keys()):
+                        col_names.append(self.colName(col_name))
+                    logging.info("Inserting data to table: %s_%s" % (tableName, table_suffix))
+                    self.insert("%s_%s" % (tableName, table_suffix), col_names, data[tableName] )
+                data = {}
+                logging.debug("Finishing pushing data")
+            
+            e_line = e_line.split(",")
+            for table_name in dict_cols.keys():
+                data_line = [e_line[col_seperators[0]]] #the 0 separator is assumed to be the pk index
+                if table_name == "all": continue
+                if table_name not in data.keys():
+                    data[table_name] = []
+                for col in sorted(dict_cols[table_name].keys()):
+                    value, col_idx = dict_cols[table_name][col]
+                    data_line.append(e_line[col_idx].strip())
+                    
+                logging.debug("table name %s: data_line length: %s, number of columns in table: %s" %
+                              ( table_name, len(data_line), len(dict_cols[table_name].keys())+1 ))
+                data[table_name].append(data_line)
+            counter = counter + 1
+    
+    def insertTableData(self, dict_cols, files, col_seperators):
+        for x in range(len(files.e_files)):
+            e_file = open(files.e_files[x])
+            m_file = open(files.m_files[x])
+            self.insertDataFromFile(e_file, "e", dict_cols, files, col_seperators)
+            self.insertDataFromFile(m_file, "m", dict_cols, files, col_seperators)
     
     def run(self):
         #This is always true because the queue.get command will raise an exception if empty 
@@ -209,30 +338,37 @@ class ThreadFiles(threading.Thread):
             #print len(book.sheets())
             sheet = book.sheets()[0]
             dict_cols = {"all" : {}}
-            csv_headers = []
+            
+            #
+            # Indexes of separators because there are multiple tables per sheet.
+            # This is required for the csv files to match up the data in particular columns to the correct tables.   
+            col_seperators = [] 
+            
+            #the csv column index
+            col_idx = 0
             for col in range(sheet.ncols):
-                csv_headers.append(sheet.cell(0, col).value)
                 m = self.col_re.match(sheet.cell(0, col).value)
+                
                 if m == None:
-                    dict_cols["all"][sheet.cell(0, col).value] = sheet.cell(1, col).value
+                    dict_cols["all"][sheet.cell(0, col).value] = (sheet.cell(1, col).value, col_idx)
                 else:
                     #Use the fact that if the table_name is not in the dictionary yet
                     #maping csv and header information is non trivial. Multiple tables with a main
                     # make this a pain. Try to only work with say, 2000k inserts at a time. 
                     if m.group("table_name") not in dict_cols.keys():
                         dict_cols[m.group("table_name")] = {}
-                    dict_cols[m.group("table_name")][m.group("col_name")] = sheet.cell(1, col).value
-            pk = None
-            if "LOGRECNO" in dict_cols["all"].keys():
-                pk = ("LOGRECNO", "integer")
-
-            for key in dict_cols.keys():
-                if (key == "all"): continue
-                col_names = []
-                for k in sorted(dict_cols[key].keys()):
-                    col_names.append((k, "varchar(255)"))
-                self.createTable("%s_meta" % key, pk, None, col_names)
+                        col_seperators.append(col_idx)
+                    dict_cols[m.group("table_name")][m.group("col_name")] = (sheet.cell(1, col).value, col_idx)
+                col_idx = col_idx + 1
             
+            #The first seperator is the last column in the all section of the seq file, zero indexed.
+            #If looking at the SeqX.xls file, this is the first k column headers, then the table names start
+            #it is very clear when looking the spread sheet.  
+            col_seperators.insert(0, len(dict_cols["all"].keys())-1)
+
+            self.createMetaTables(dict_cols)
+            self.createTables(dict_cols, files)
+            self.insertTableData(dict_cols, files, col_seperators)
             self.queue.task_done()
             
 CONFIG_FORMAT = Template("""
@@ -367,11 +503,12 @@ def unpackFiles(config_dict):
 
 def putIntoDB(folder_dict, geo):
     queue = Queue.Queue()
-    for i in range(5):
+    for i in range(20):
         t = ThreadFiles(queue)
         t.setDaemon(True)
         t.start()
-    queue.put(folder_dict[1])
+    for x in folder_dict.keys():
+        queue.put(folder_dict[x])
     queue.join()
         
 def parseArgs(argv):
