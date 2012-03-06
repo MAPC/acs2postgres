@@ -1,4 +1,5 @@
-
+# data retrieved from ftp://ftp.census.gov/acs2010_5yr/summaryfile/
+# The geo pdf is the ftp://ftp.census.gov/acs2010_5yr/summaryfile/ACS_2006-2010_SF_Tech_Doc.pdf
 import sys, argparse
 import psycopg2, re
 from psycopg2 import ProgrammingError
@@ -31,10 +32,14 @@ class ThreadUnzip(threading.Thread):
             self.queue.task_done()
 
 class Files():
-    def __init__(self, seq_file):
+    #seq_file = None denotes a geo file
+    #add an assertion here 
+    def __init__(self, seq_file=None, geo_file=None):
+        assert seq_file != None or geo_file != None
         self.seq_file = seq_file
         self.e_files = []
         self.m_files = []
+        self.geo_file = geo_file
     
     @classmethod
     def createTupples(cls, dict, seq_folder, folders=[]):
@@ -60,6 +65,7 @@ class Files():
                 id = int(s.groups("id")[0])
                 folder_dict[id] = Files("%s/%s" % (seq_folder, seq))
         
+        geo_files = []
         for f in folders:
             files = os.listdir(f)
             for file in files:
@@ -74,8 +80,11 @@ class Files():
                     id = int(m.groups()[1])/1000
                     folder_dict[id].m_files.append("%s/%s" % (f, file))
                 elif g != None:
-                    geo.append(file)
-        return (folder_dict, geo)
+                    #The geo files with the same name are EXACTLY identical, regardless of source. 
+                    if file not in geo_files:
+                        id = "geo%s" % len(geo_files)
+                        folder_dict[id] = Files(seq_file=None, geo_file="%s/%s" % (f, file))
+        return folder_dict
                         
 class ThreadFiles(threading.Thread):
     def __init__(self, queue):
@@ -208,6 +217,80 @@ class ThreadFiles(threading.Thread):
                 data.append([k, dict_cols[key][k][0]])
             self.insert(table, ["header", "description"], data)
     
+    def colTypeFromArray(self, line=[], headerType={}):
+        """
+        This will read each array object and try to determine the type.
+        headerTypes is used to compare the current guess for the cell. Initially
+        pass in an empty dictionary and on subsequent passes pass back the returned dictionary. 
+        If the length of the array object is zero, the type can not be determined
+        so "null" will be returned.
+        If the guess is currently float, but float fails to be parsed, convert to null 
+        (this should rarely if ever happen)
+        If guess is currently int but float passes, make the column a float
+        If int fails, make varchar(len(string))
+        
+        NOTE: for now only pass in non-zero length empty strings if working with
+        column delineated data. This will not work with data if the first iteration
+        the cell is one length and subsequent iterations have the cell a different length 
+        """
+        x = 0
+        for cell in line:
+            if x in headerType.keys():
+                if len(cell) == 0:
+                    #no information given about the data type, should assume string
+                    continue
+                else:
+                    ret = None
+                    try:
+                        #if passes an int test and the field is currently null make the field an int
+                        ret = int(cell)
+                        if headerType[x] == "null":
+                            headerType[x] = "integer"
+                        #if it's an integer don't change it, if it's a float don't change it
+                    except ValueError:
+                        ret = None
+                    
+                    if ret == None:
+                        try:
+                            #if passes float but the curent deffinition is not a string (int or null only)
+                            # change the type to a float
+                            ret = float(cell)
+                            if headerType[x] == "integer" or headerType[x] == "null":
+                                headerType[x] = "float" 
+                        except ValueError:
+                            ret = None
+                    if ret == None:
+                        #We should never get here, but in case we do make the type a varchar
+                        #if the current guess is null, otherwise leave it alone
+                        if headerType[x] == "integer" or headerType[x] == "float" or headerType[x] == "null": 
+                            if len(cell.strip()) != 0:
+                                headerType[x] = "varchar(%s)" % len(cell)
+            else:
+                if len(cell) == 0:
+                    headerType[x] = "null"
+                else:
+                    ret = None
+                    try:
+                        ret = int(cell)
+                        headerType[x] = "integer"
+                    except ValueError:
+                        ret = None
+                    
+                    if ret == None:
+                        try:
+                            ret = float(cell)
+                            headerType[x] = "float"
+                        except ValueError:
+                            ret = None
+                    
+                    if ret == None:
+                        if len(cell.strip()) == 0:
+                            headerType[x] = "null" #empty doesn't really give you a type, hope that it will eventually
+                        else:
+                            headerType[x] = "varchar(%s)" % len(cell) 
+            x = x + 1
+        return headerType
+    
     def columnTypes(self, dict_cols, files):
         """
         This will go through each of the e files and try to decern which db type
@@ -220,7 +303,7 @@ class ThreadFiles(threading.Thread):
             line = f.readline()
             f.close()
             line = line.split(",")
-            x = 0
+            
             """
             This is a bit confusing. The hirerarcy needs to be float -> int -> string
             If in one file the column is an int but in another, that same column is a float,
@@ -231,40 +314,17 @@ class ThreadFiles(threading.Thread):
             will change the datatype if the need arises. 
             
             """
-            for cell in line:
-                if x in headerType.keys():
-                    if len(cell) == 0:
-                        #no information given about the data type, should assume string
-                        continue
-                    else:
-                        try:
-                            ret = int(cell)
-                            if headerType[x] == "null":
-                                headerType[x] = "integer"
-                            #if it's an integer don't change it, if it's a float don't change it
-                        except ValueError:
-                            #always turn it to a float.
-                            headerType[x] = "float"
-                else:
-                    if len(cell) == 0:
-                        headerType[x] = "null"
-                    else:
-                        try:
-                            ret = int(cell)
-                            headerType[x] = "integer"
-                        except ValueError:
-                            headerType[x] = "float"
-                x = x + 1
+            headerType = self.colTypeFromArray(line, headerType)
         return headerType
                 
     
-    def createTables(self, dict_cols, files):
+    def createTables(self, dict_cols, singleFile):
         #pk_logRecNo tells if the table in pk_logRecNo
         ok_head = None
         if "LOGRECNO" in dict_cols["all"].keys():
             ok_head = ("LOGRECNO", "integer")
         
-        colTypes = self.columnTypes(dict_cols, files)
+        colTypes = self.columnTypes(dict_cols, singleFile)
         
         for key in dict_cols.keys():
             if (key == "all"): continue
@@ -289,8 +349,94 @@ class ThreadFiles(threading.Thread):
                     colType = "varchar(255)"
                 headers.append((self.colName(col), colType))
             self.createTable( table, ok_head, None, headers )
+    
+    def parseGeoLine(self, dict_lookup, line, strip=True):
+        """This will parase a single line of text using the dict_lookup.
+        The dict_lookup should be a dictionary with keys being the start column
+        of the associated column name. So of the form:
+        dict_lookup[0] = "column name"
+        This should always be 0 indexed.
+        The return value is an array of values indexed from the dictionary keys
+        "strip" will strip the parsed substring string. Turn off if trying to get
+        the header lengths.
+        """
+        assert 0 in dict_lookup.keys()
+        cur_idx = 0
+        ret = []
+        for idx in sorted(dict_lookup.keys()):
+            if idx == 0:
+                cur_idx = idx
+            else:
+                if strip == True:
+                    ret.append(line[cur_idx:idx].strip())
+                else:
+                    ret.append(line[cur_idx:idx])
+                cur_idx = idx
+        ret.append(line[cur_idx:])
+        return ret
+    
+    def lookupFromCols(self, dict_cols_item):
+        headers = []
+        dict_lookup = {}
+        for header in dict_cols_item.keys():
+            dict_lookup[dict_cols_item[header][1]] = header
+        
+        for key in sorted(dict_lookup.keys()):
+            headers.append(dict_lookup[key])
+        return (headers, dict_lookup)
+    
+    def createGeoTables(self, dict_cols, singleFile):
+        dict_lookup = {}
+        for tableName in dict_cols:
+            headers, dict_lookup = self.lookupFromCols(dict_cols[tableName])
             
-    def batchInsert(self, data, table_suffix, dict_cols):
+            #column types try to read in from file, if nothing, assume string of specified length but for now 255
+            headerType = {}
+            geo_f = open(singleFile.geo_file)
+            for line in geo_f.readlines():
+                line = self.parseGeoLine(dict_lookup, line, strip=False)
+                headerType = self.colTypeFromArray(line, headerType)
+            geo_f.close()
+            
+
+            pk_head = None
+            if "LOGRECNO" in dict_cols[tableName].keys():
+                pk_head = ("LOGRECNO", "integer")
+            other_head = []
+
+            for header_idx in sorted(headerType.keys()):
+                if headers[header_idx] != "LOGRECNO":
+                    if headerType[header_idx] == "null":
+                        other_head.append((headers[header_idx], "varchar(255)"))
+                    else:
+                        other_head.append((headers[header_idx], headerType[header_idx]))
+            self.createTable(tableName, pk_head, None, other_head)
+    
+    def batchGeoInsert(self, table, col_names, data):
+        logging.debug("Pushing data")
+        self.insert(table, col_names, data)
+        logging.debug("Pushed data")
+    
+    def insertGeoDataFromFile(self, dict_cols, singleFile):
+        data = []
+        
+        for tableName in dict_cols.keys():
+            headers, dict_lookup = self.lookupFromCols(dict_cols[tableName])
+            
+            geo_f = open(singleFile.geo_file)
+            
+            counter = 1
+            for line in geo_f.readlines():
+                if counter%200 == 0:
+                    self.batchGeoInsert(tableName, headers, data)
+                    data = []
+                line = self.parseGeoLine(dict_lookup, line)
+                data.append(line)
+                counter = counter + 1
+            self.batchGeoInsert(tableName, headers, data)
+                
+
+    def batchInsert(self, data, table_suffix, dict_cols, add_logRecNo=True):
         logging.debug("Pushing data")
         for tableName in data.keys():
             col_names = []
@@ -300,16 +446,15 @@ class ThreadFiles(threading.Thread):
                 col_names.append(self.colName(col_name))
             logging.info("Inserting data to table: %s_%s" % (tableName, table_suffix))
             self.insert("%s_%s" % (tableName, table_suffix), col_names, data[tableName] )
-        data = {}
         logging.debug("Finishing pushing data")
             
-    def insertDataFromFile(self, file_handle, table_suffix, dict_cols, files, col_seperators):
+    def insertDataFromFile(self, file_handle, table_suffix, dict_cols, col_seperators):
         data = {}
         counter = 1
         for e_line in file_handle.readlines():
             if counter%200 == 0:
                 self.batchInsert(data, table_suffix, dict_cols)
-            
+                data = {}
             e_line = e_line.split(",")
             for table_name in dict_cols.keys():
                 data_line = [e_line[col_seperators[0]]] #the 0 separator is assumed to be the pk index
@@ -327,53 +472,138 @@ class ThreadFiles(threading.Thread):
         self.batchInsert(data, table_suffix, dict_cols)
         
     
-    def insertTableData(self, dict_cols, files, col_seperators):
-        for x in range(len(files.e_files)):
-            e_file = open(files.e_files[x])
-            m_file = open(files.m_files[x])
-            self.insertDataFromFile(e_file, "e", dict_cols, files, col_seperators)
-            self.insertDataFromFile(m_file, "m", dict_cols, files, col_seperators)
+    def insertTableData(self, dict_cols, singleFile, col_seperators):
+        for x in range(len(singleFile.e_files)):
+            e_file = open(singleFile.e_files[x])
+            m_file = open(singleFile.m_files[x])
+            self.insertDataFromFile(e_file, "e", dict_cols, col_seperators)
+            self.insertDataFromFile(m_file, "m", dict_cols, col_seperators)
+            e_file.close()
+            m_file.close()
+    
+    def seqInsert(self, singleFile):
+        book = xlrd.open_workbook(singleFile.seq_file)
+        #There are always two sheats, E and M. They are exactly the same
+        #print len(book.sheets())
+        sheet = book.sheets()[0]
+        dict_cols = {"all" : {}}
+        
+        #
+        # Indexes of separators because there are multiple tables per sheet.
+        # This is required for the csv files to match up the data in particular columns to the correct tables.
+        #Ended up only caring about the first one which is expected to be LOGRECNO   
+        col_seperators = [] 
+        
+        #the csv column index
+        col_idx = 0
+        for col in range(sheet.ncols):
+            m = self.col_re.match(sheet.cell(0, col).value)
+            
+            if m == None:
+                dict_cols["all"][sheet.cell(0, col).value] = (sheet.cell(1, col).value, col_idx)
+            else:
+                #Use the fact that if the table_name is not in the dictionary yet
+                #maping csv and header information is non trivial. Multiple tables with a main
+                # make this a pain. Try to only work with say, 2000k inserts at a time. 
+                if m.group("table_name") not in dict_cols.keys():
+                    dict_cols[m.group("table_name")] = {}
+                    col_seperators.append(col_idx)
+                dict_cols[m.group("table_name")][m.group("col_name")] = (sheet.cell(1, col).value, col_idx)
+            col_idx = col_idx + 1
+        
+        #The first seperator is the last column in the all section of the seq file, zero indexed.
+        #If looking at the SeqX.xls file, this is the first k column headers, then the table names start
+        #it is very clear when looking the spread sheet.  
+        col_seperators.insert(0, len(dict_cols["all"].keys())-1)
+
+        self.createMetaTables(dict_cols)
+        self.createTables(dict_cols, singleFile)
+        self.insertTableData(dict_cols, singleFile, col_seperators)
+    
+    def geoInsert(self, singleFile):
+        #geo dict will have the format geo_dict[column name] = (description, start column) as a tupple
+        #note that the PDF assumes a 1 index, python uses 0 so starting position is 0. 
+        #TODO (Extension): This might go into an IPL file. If this happens, add config value in the [others]
+        #section  
+        geo_dict = {}
+        dict_cols = {}
+        geoFile = singleFile.geo_file
+        #RECORD CODES
+        geo_dict["FILEID"] = ("Always equal to ACS Summary File identification", 0)
+        geo_dict["STUSAB"] = ("State Postal Abbreviation", 6)
+        geo_dict["SUMLEVEL"] = ("Summary Level", 8)
+        geo_dict["COMPONENT"] = ("Geographic Component", 11)
+        geo_dict["LOGRECNO"] = ("Logical Record Number", 13)
+        
+        #GEOGRAPHIC AREA CODES
+        geo_dict["US"] = ("US", 20)
+        geo_dict["REGION"] = ("Census Region", 21)
+        geo_dict["DIVISION"] = ("Census Division", 22)
+        geo_dict["STATECE"] = ("State (Census Code)", 23)
+        geo_dict["STATE"] = ("State (FIPS Code)", 25)
+        geo_dict["COUNTY"] = ("State (FIPS Code)", 28)
+        geo_dict["COUSUB"] = ("County Subdivision (FIPS)", 30)
+        geo_dict["PLACE"] = ("Place (FIPS Code)", 35)
+        geo_dict["TRACT"] = ("Census Tract", 40)
+        geo_dict["BLKGRP"] = ("Block Group", 46)
+        geo_dict["CONCIT"] = ("Consolidated City", 47)
+        geo_dict["AIANHH"] = ("American Indian Area/Alaska Native Area/ Hawaiian Home Land (Census)", 52)
+        geo_dict["AIANHHFP"] = ("American Indian Area/Alaska Native Area/ Hawaiian Home Land (FIPS)", 56)
+        geo_dict["AIHHTLI"] = ("American Indian Trust Land/ Hawaiian Home Land Indicator", 61)
+        geo_dict["AITSCE"] = ("American Indian Tribal Subdivision (Census)", 62)
+        geo_dict["AITS"] = ("American Indian Tribal Subdivision (FIPS)", 65)
+        geo_dict["ANRC"] = ("Alaska Native Regional Corporation (FIPS)", 70)
+        geo_dict["CBSA"] = ("Metropolitan and Micropolitan Statistical Area", 75)
+        geo_dict["CSA"] = ("Combined Statistical Area", 80)
+        geo_dict["METDIV"] = ("Metropolitan Statistical Area-Metropolitan Division", 83)
+        geo_dict["MACC"] = ("Metropolitan Area Central City", 88)
+        geo_dict["MEMI"] = ("Metropolitan/Micropolitan Indicator Flag", 89)
+        geo_dict["NECTA"] = ("New England City and Town Area", 90)
+        geo_dict["CNECTA"] = ("New England City and Town Combined Statistical Area", 95)
+        geo_dict["NECTADIV"] = ("New England City and Town Area Division", 98)
+        geo_dict["UA"] = ("Urban Area", 103)
+        geo_dict["BLANK"] = ("BLANK", 108)
+        geo_dict["CDCURR"] = ("Current Congressional District", 113)
+        geo_dict["SLDU"] = ("State Legislative District Upper", 115)
+        geo_dict["SLDL"] = ("State Legislative District Lower", 118)
+        geo_dict["BLANK"] = ("BLANK", 121)
+        geo_dict["BLANK"] = ("BLANK", 127)
+        geo_dict["BLANK"] = ("BLANK", 130)
+        geo_dict["SUBMCD"] = ("Subminor Civil Division (FIPS)", 135)
+        geo_dict["SDELM"] = ("State-School District (Elementary)", 140)
+        geo_dict["SDSEC"] = ("State-School District (Secondary)", 145)
+        geo_dict["SDUNI"] = ("State-School District (Unified)", 150)
+        geo_dict["UR"] = ("Urban/Rural", 155)
+        geo_dict["PCI"] = ("Principal City Indicator", 156)
+        geo_dict["BLANK"] = ("BLANK", 157)
+        geo_dict["BLANK"] = ("BLANK", 163)
+        geo_dict["PUMA5"] = ("Public Use Microdata Area - 5\% File", 168)
+        geo_dict["BLANK"] = ("BLANK", 173)
+        geo_dict["GEOID"] = ("Geographic Identifier", 178)
+        geo_dict["NAME"] = ("Area Name", 218)
+        geo_dict["BTTR"] = ("Tribal Tract", 418)
+        geo_dict["BTBG"] = ("Tribal Block Group", 424)
+        geo_dict["BLANK"] = ("BLANK", 426)
+        
+        tableName = geoFile.strip().split("/")[-1].split(".")[0]
+        dict_cols[tableName] = geo_dict
+        self.createMetaTables(dict_cols)
+        self.createGeoTables(dict_cols, singleFile)
+        self.insertGeoDataFromFile(dict_cols, singleFile)
+        
+        
+        
+        
     
     def run(self):
         #This is always true because the queue.get command will raise an exception if empty 
         while True:
-            files = self.queue.get()
-            book = xlrd.open_workbook(files.seq_file)
-            #There are always two sheats, E and M. They are exactly the same
-            #print len(book.sheets())
-            sheet = book.sheets()[0]
-            dict_cols = {"all" : {}}
-            
-            #
-            # Indexes of separators because there are multiple tables per sheet.
-            # This is required for the csv files to match up the data in particular columns to the correct tables.   
-            col_seperators = [] 
-            
-            #the csv column index
-            col_idx = 0
-            for col in range(sheet.ncols):
-                m = self.col_re.match(sheet.cell(0, col).value)
-                
-                if m == None:
-                    dict_cols["all"][sheet.cell(0, col).value] = (sheet.cell(1, col).value, col_idx)
-                else:
-                    #Use the fact that if the table_name is not in the dictionary yet
-                    #maping csv and header information is non trivial. Multiple tables with a main
-                    # make this a pain. Try to only work with say, 2000k inserts at a time. 
-                    if m.group("table_name") not in dict_cols.keys():
-                        dict_cols[m.group("table_name")] = {}
-                        col_seperators.append(col_idx)
-                    dict_cols[m.group("table_name")][m.group("col_name")] = (sheet.cell(1, col).value, col_idx)
-                col_idx = col_idx + 1
-            
-            #The first seperator is the last column in the all section of the seq file, zero indexed.
-            #If looking at the SeqX.xls file, this is the first k column headers, then the table names start
-            #it is very clear when looking the spread sheet.  
-            col_seperators.insert(0, len(dict_cols["all"].keys())-1)
+            singleFile = self.queue.get()
 
-            self.createMetaTables(dict_cols)
-            self.createTables(dict_cols, files)
-            self.insertTableData(dict_cols, files, col_seperators)
+            if singleFile.seq_file != None:
+                self.seqInsert(singleFile)
+            elif singleFile.geo_file != None:
+                self.geoInsert(singleFile)
             self.queue.task_done()
             
 CONFIG_FORMAT = Template("""
@@ -506,14 +736,17 @@ def unpackFiles(config_dict):
     queue.put("%s/%s" % (config_dict["data_dir"], config_dict["sumFileTemp"]))
     queue.join()
 
-def putIntoDB(folder_dict, geo):
+def putIntoDB(folder_dict):
     queue = Queue.Queue()
+    #TODO: make 20 a -j flag default to 10. 
     for i in range(20):
         t = ThreadFiles(queue)
         t.setDaemon(True)
         t.start()
-    for x in folder_dict.keys():
-        queue.put(folder_dict[x])
+    #for x in folder_dict.keys():
+    #    queue.put(folder_dict[x])
+    queue.put(folder_dict[1])
+    queue.put(folder_dict["geo0"])
     queue.join()
         
 def parseArgs(argv):
@@ -621,8 +854,8 @@ to log at the info level.
         template = "%s/%s" % (data_base, config_dict["sumFileTemp"].split(".")[0])
         folder1 = "%s/%s" % (data_base, config_dict["zip1"].split(".")[0])
         folder2 = "%s/%s" % (data_base, config_dict["zip2"].split(".")[0])
-        folder_dict, geo = Files.createTupples(config_dict, template, [folder1, folder2])
-        putIntoDB(folder_dict, geo)
+        folder_dict = Files.createTupples(config_dict, template, [folder1, folder2])
+        putIntoDB(folder_dict)
         #get the zip files into a database
         #1) Pass the config file
         #2) List all of the file names
@@ -634,6 +867,7 @@ to log at the info level.
 
 def main(argv):
     parseArgs(sys.argv)
+    logging.shutdown()
 main(sys.argv)
 
 
