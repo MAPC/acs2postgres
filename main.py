@@ -481,6 +481,20 @@ class ThreadFiles(threading.Thread):
             e_file.close()
             m_file.close()
     
+    def createViews(self, dict_cols, singleFile):
+        for table_name in dict_cols.keys():
+            logging.info("Dropping view %s" % table_name)
+            cmd_str = "DROP VIEW %s;" % table_name
+            self.execute(cmd_str)
+            logging.info("creating view %s" % table_name)
+            cmd_str = "CREATE OR REPLACE VIEW %s AS SELECT e.LOGRECNO as LOGRECNO, \n" % table_name
+            for col in sorted(dict_cols[table_name].keys()):
+                col_name = self.colName(col)
+                cmd_str = "%se.%s as %s, m.%s as %s_error, \n" % (cmd_str, col_name, col_name, col_name, col_name)
+            cmd_str = cmd_str.strip(", \n")
+            cmd_str = "%s \nfrom %s_e e \njoin %s_m m on e.LOGRECNO = m.LOGRECNO;" % (cmd_str, table_name, table_name)
+            self.execute(cmd_str)
+    
     def seqInsert(self, singleFile):
         book = xlrd.open_workbook(singleFile.seq_file)
         #There are always two sheats, E and M. They are exactly the same
@@ -516,9 +530,10 @@ class ThreadFiles(threading.Thread):
         #it is very clear when looking the spread sheet.  
         col_seperators.insert(0, len(dict_cols["all"].keys())-1)
 
-        self.createMetaTables(dict_cols)
-        self.createTables(dict_cols, singleFile)
-        self.insertTableData(dict_cols, singleFile, col_seperators)
+        #self.createMetaTables(dict_cols)
+        #self.createTables(dict_cols, singleFile)
+        #self.insertTableData(dict_cols, singleFile, col_seperators)
+        self.createViews(dict_cols, singleFile)
     
     def geoInsert(self, singleFile):
         #geo dict will have the format geo_dict[column name] = (description, start column) as a tupple
