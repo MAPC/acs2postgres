@@ -69,7 +69,7 @@ class ThreadFiles(threading.Thread):
     This class will take the output of Files.createTupples() and 
     insert data into the database.
     """
-    def __init__(self, queue, db_host, db_database, db_user, db_pass, batchRows=200):
+    def __init__(self, queue, db_host, db_port, db_database, db_user, db_pass, batchRows=200):
         """
         * queue: The shared threading queue
         * db_host: The database host
@@ -81,10 +81,11 @@ class ThreadFiles(threading.Thread):
         threading.Thread.__init__(self)
         self.queue = queue
         self.db_host = db_host
+        self.db_port = db_port
         self.db_database = db_database
         self.db_user = db_user
         self.db_pass = db_pass
-        self.batchRows
+        self.batchRows = batchRows
         self.col_re = re.compile(r"(?P<table_name>\w+)_(?P<col_name>\d+)")
         
     
@@ -537,6 +538,7 @@ class ThreadFiles(threading.Thread):
         Creates the default views for all of the e and m tables.
         """
         for table_name in dict_cols.keys():
+            if table_name == "all": continue
             logging.info("Dropping view %s" % table_name)
             cmd_str = "DROP VIEW %s;" % table_name
             self.execute(cmd_str)

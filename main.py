@@ -63,6 +63,20 @@ LOG=$logFile
 # 4: DEBUG
 VERBOSE=$verbose
 
+[database]
+#The host to connect to
+HOST=$host
+
+#The port to use
+PORT=$port
+
+#The database on host to use
+DATABASE=$database
+
+#The user name and password with write access to the database
+USER=$user
+PASSWORD=$password
+
 [others]
 DATADIR=$data_dir
 #This is the max number of threads to use. More threads causes thrashing
@@ -78,22 +92,20 @@ BATCHROWS=$batch_rows
 """)
 
 def setupLog(logFile, verbose):
-    verbose = int(verbose)
-    if verbose == -1:
-        verbose = 3
     fmt="%(asctime)s %(levelname)s: %(message)s"
     level = None
-    if verbose == 1:
+    if verbose == 0:
         level = logging.ERROR
-    elif verbose == 2:
+    elif verbose == 1:
         level = logging.WARNING
-    elif verbose == 3:
+    elif verbose == 2:
         level = logging.INFO
-    elif verbose == 4:
+    elif verbose >= 3:
         level = logging.DEBUG
     logging.basicConfig(filename=logFile, format=fmt, level=level)
 
-def createConfig(year, conf_f, log_f, data_f, verbose, j, batchRows):
+def createConfig(year, conf_f, log_f, data_f, verbose, j, batchRows, host, port,
+                 database, user, password):
     """
     While this could be hard coded and not be a dictionary, I like
     a dictionary for this in case someone else needs to update this. 
@@ -116,7 +128,12 @@ def createConfig(year, conf_f, log_f, data_f, verbose, j, batchRows):
                    "verbose": verbose,
                    "data_dir": data_f,
                    "j": j,
-                   "batch_rows": batchRows }
+                   "batch_rows": batchRows,
+                   "host": host,
+                   "port": port,
+                   "database": database,
+                   "user": user,
+                   "password": password }
     config = open(conf_f, "w")
     config.write(CONFIG_FORMAT.safe_substitute(config_dict))
     config.close()
@@ -139,12 +156,17 @@ def parseConfig(configFile):
                    "verbose": parser.get("log file", "VERBOSE"),
                    "data_dir": parser.get("others", "DATADIR"),
                    "j": int(parser.get("others", "J")),
-                   "batch_rows": int(parser.get("others", "BATCHROWS")) }
+                   "batch_rows": int(parser.get("others", "BATCHROWS")),
+                   "host": parser.get("database", "HOST"),
+                   "port": parser.get("database", "PORT"),
+                   "database": parser.get("database", "DATABASE"),
+                   "user": parser.get("database", "USER"),
+                   "password": parser.get("database", "PASSWORD")}
     return config_dict
     
-def unpackFiles(config_dict):
+def unpackFiles(config_dict, j):
     queue = Queue.Queue()
-    for i in range(5):
+    for i in range(j):
         t = ThreadUnzip(queue)
         t.setDaemon(True)
         t.start()
@@ -157,16 +179,17 @@ def unpackFiles(config_dict):
     queue.put(templateFile)
     queue.join()
 
-def putIntoDB(folder_dict, j):
+def putIntoDB(folder_dict, j, host, port, database, user, password, batchRows):
     queue = Queue.Queue()
-    #TODO: make 20 a -j flag default to 10. 
     for i in range(j):
-        t = ThreadFiles(queue)
+        t = ThreadFiles(queue, host, port, database, user, password, batchRows=batchRows)
         t.setDaemon(True)
         t.start()
     
-    for x in folder_dict.keys():
-        queue.put(folder_dict[x])
+    #for x in folder_dict.keys():
+    #    queue.put(folder_dict[x])
+    queue.put(folder_dict[1])
+    queue.put(folder_dict["geo0"])
     queue.join()
         
 def parseArgs(argv):
@@ -176,6 +199,9 @@ create a config file, which can be automatically created with a 'Best Guess'. Th
 config file output might need to updated in this application to correctly output
 new defaults if things like the census ftp changes. All of the options
 are written to the configuration file but can be overridden when run. """)
+    ###########################
+    #THE CREATE CONFIG OPTIONS#
+    ###########################
     parser.add_argument("--createConfig", default=False, action='store_true', required=False, help="""
 This will create the configuration file. If the --conf flag is not passed
 the default file location and name will be used. --year needs to be
@@ -185,9 +211,24 @@ This is the year to get data for as YYYY format.
 This is required for the createConfig parameter and is used as the base 
 year for quite a lot of file names. For now, the only 5 year data will
 be retrieved. This might be expanded later. There is no default for this
-option.
-The expansion will create a num_year variable and update the dictionary. 
-""")
+option.""")
+    parser.add_argument("--host", nargs=1, default="", required=False, help="""
+This is the database host to connect to. --host must be passed when the
+--createConfig flag is passed.""")
+    parser.add_argument("--port", nargs=1, default=-1, type=int, required=False, help="""
+This is the database port to connect to. The default is 5432.""")
+    parser.add_argument("-u", "--user", nargs=1, default="", required=False, help="""
+This is the user to login with. -u or --user must be passed when the
+--createConfig flag is passed. There is no default.""")
+    parser.add_argument("--password", nargs=1, default="", required=False, help="""
+This is the password to login with. If the password is not passed when
+--createConfig is passed the password will be empty. There is no default.""")
+    parser.add_argument("-b", "--database", nargs=1, default="", required=False, help="""
+This is the database to connect to on the host. -b or --database must be passed when the
+--createConfig flag is passed. There is no default.""")
+    ###########################
+    #OTHER OPTIONS            #
+    ###########################
     parser.add_argument("-d", "--data", nargs=1, required=False, help="""
 This is the path to the data directory. Please make sure
 that you have read AND write access to whichever directory is chosen.
@@ -210,23 +251,27 @@ to log at the info level.
 -vv:    WARNING
 -vvv:   INFO
 -vvvv:  DEBUG""")
-    parser.add_argument("-j", "--numThreads", default=2, required=False, help="""
+    parser.add_argument("-j", "--numThreads", default=-1, type=int, required=False, help="""
 This defines the max number of threads to use while running this program. 
 The more threads, the more speadup but the more possible thrashing. A good
 Typical value is n+1 where n is the number of cores in the computer running
-the application. More can be used for tuning the application.""")
-    parser.add_argument("--batchRows", default=200, required=False, help="""
+the application. More can be used for tuning the application. The default
+value is 2.""")
+    parser.add_argument("--batchRows", default=-1, type=int, required=False, help="""
 This defines the number of rows to batch before writing to the database. The
 more rows the faster the application can run but the more ram required. Tune
-this parameter to find the fastest speed for a particular computer.""")
+this parameter to find the fastest speed for a particular computer. The default
+value is 200""")
     cwd = os.getcwd()
     args = parser.parse_args()
-
-    if args.createConfig == True and args.year != -1:
+    if args.createConfig == True:
         #Create the log file
         conf_f = "%s/acs.conf" % cwd
         log_f = "%s/acs.log" % cwd
         data_f = "%s/data/" % cwd
+        port_d = 5432
+        password_s = ""
+        verbose = 3
 
         if args.conf != None:
             conf_f = args.conf[0]
@@ -234,21 +279,57 @@ this parameter to find the fastest speed for a particular computer.""")
             log_f = args.log[0]
         if args.data != None:
             data_f = args.data[0]
+        if args.port != -1:
+            port_d = int(args.port[0])
+        if args.password != "":
+            password = args.password[0]
+        if args.verbose != -1:
+            verbose = args.verbose
+        
+        #If createConfig is passed the the following should be passed as well:
+        #year, host, port (opional), user, password (optional), database
+        if args.year == -1:
+            setupLog(log_f, verbose)
+            logging.critical("Tried to create a config file but the year was not passed. Now exiting.")
+            print "Tried to create a config file but the year was not passed. Now exiting."
+            return
+        
+        if args.host == "":
+            setupLog(log_f, verbose)
+            logging.critical("Tried to create a config file but the database host was not passed. Now exiting.")
+            print "Tried to create a config file but the database host was not passed. Now exiting."
+            return
+        
+        if args.user == "":
+            setupLog(log_f, verbose)
+            logging.critical("Tried to create a config file but the database user was not passed. Now exiting.")
+            print "Tried to create a config file but the database user was not passed. Now exiting."
+            return
+        
+        if args.database == "":
+            setupLog(log_f, args.verbose)
+            logging.critical("Tried to create a config file but the database to use was not passed. Now exiting.")
+            print "Tried to create a config file but the database to use was not passed. Now exiting."
+            return
+        
+        numThreads = 2
+        if args.numThreads != -1:
+            numThreads = int(args.numThreads)
+        
+        batchRows = 200
+        if args.batchRows != -1:
+            batchRows = int(args.batchRows)
         
         setupLog(log_f, args.verbose)
         logging.info("Starting the creation of the config file.")
         createConfig(args.year[0], conf_f, log_f, data_f, args.verbose,
-                     int(args.numThreads), int(args.batchRows))
+                     numThreads, batchRows, args.host[0], port_d, args.database[0],
+                     args.user[0], password)
         logging.info("Finished creation of the config file.")
     elif args.createConfig == True and args.year == -1:
         log_f = "%s/acs.log" % cwd
         if args.log != None:
             log_f = args.log
-        setupLog(log_f, args.verbose)
-        logging.critical("Tried to create a config file but the year was not passed. Now exiting.")
-        print "Tried to create a config file but the year was not passed. Now exiting."
-        #log a critical error and exit
-        return
     elif args.createConfig == False:
         conf_f = "%s/acs.conf" % cwd
         if args.conf != None:
@@ -268,16 +349,30 @@ this parameter to find the fastest speed for a particular computer.""")
             config_dict["data_dir"] = args.data[0]
         if args.verbose != -1:
             config_dict["verbose"] = args.verbose
+        if args.numThreads != -1:
+            config_dict["j"] = int(args.numThreads)
+        if args.batchRows != -1:
+            config_dict["batch_rows"] = int(args.batchRows)
+        #database overrides
+        if args.host != "":
+            config_dict["host"] = args.host[0]
+        if args.port != -1:
+            config_dict["port"] = int(args.port[0])
+        if args.database != "":
+            config_dict["database"] = args.database[0]
+        if args.user != "":
+            config_dict["user"] = args.user[0]
+        if args.password != "":
+            config_dict["password"] = args.password[0]
+        
+        
         setupLog(config_dict["logFile"], config_dict["verbose"])
         
-        
-        #Note that all of this is multithreaded to speed up the process
-        #Be very careful and test quite well. This all depends on a queue
-        #This is great, but the queue will get very large, very fast.  
-        #get the zip files from the ftp
-        #unpack the zips
+        logging.debug("The config_dict is: %s" % config_dict)
+        print config_dict
+        return
         logging.info("unpacking zip files")
-        #unpackFiles(config_dict)
+        unpackFiles(config_dict, config_dict["j"])
         logging.info("finished unpacking zip files")
         
         data_base = config_dict["data_dir"]
@@ -285,18 +380,14 @@ this parameter to find the fastest speed for a particular computer.""")
         folder1 = "%s/%s" % (data_base, config_dict["zip1"].split(".")[0])
         folder2 = "%s/%s" % (data_base, config_dict["zip2"].split(".")[0])
         folder_dict = Files.createTupples(config_dict["geo_lower"].split(".")[0], template, [folder1, folder2])
-        putIntoDB(folder_dict)
-        #get the zip files into a database
-        #1) Pass the config file
-        #2) List all of the file names
-        #3) regex the file name to get e(YYYY)5ma%d.txt where the %d should be divided by 1000 (ma is geo_lower.split(".")[0])
-        #4) m(YYYY)5ma%d.txt where the %d should be divided by 1000
-        #5) g(YYYY)5ma.txt
-        #6) the g file is a bitch, look at the pdf to make sure that it's done correctly. 
+        putIntoDB(folder_dict, config_dict["j"], 
+                  config_dict["host"], config_dict["port"],
+                  config_dict["database"], config_dict["user"], 
+                  config_dict["password"], config_dict["batch_rows"])
         return
 
 def main(argv):
-    parseArgs(sys.argv)
+    parseArgs(argv)
     logging.shutdown()
 main(sys.argv)
 
