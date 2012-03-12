@@ -12,10 +12,10 @@ from string import Template
 CONFIG_FORMAT = Template("""
 #This is the basic configuration on the FTP server
 [ftp]
-#The FTP host
+#The FTP host (not implemented)
 HOST=$ftp_host
 
-#The 5 year base directory
+#The 5 year base directory (not implemented)
 BASE5=$acs5
 
 #The summary file base directory name, typically summaryfile
@@ -186,10 +186,10 @@ def putIntoDB(folder_dict, j, host, port, database, user, password, batchRows):
         t.setDaemon(True)
         t.start()
     
-    #for x in folder_dict.keys():
-    #    queue.put(folder_dict[x])
-    queue.put(folder_dict[1])
-    queue.put(folder_dict["geo0"])
+    for x in folder_dict.keys():
+        queue.put(folder_dict[x])
+    #queue.put(folder_dict[1])
+    #queue.put(folder_dict["geo0"])
     queue.join()
         
 def parseArgs(argv):
@@ -270,7 +270,7 @@ value is 200""")
         log_f = "%s/acs.log" % cwd
         data_f = "%s/data/" % cwd
         port_d = 5432
-        password_s = ""
+        password = ""
         verbose = 3
 
         if args.conf != None:
@@ -322,7 +322,7 @@ value is 200""")
         
         setupLog(log_f, args.verbose)
         logging.info("Starting the creation of the config file.")
-        createConfig(args.year[0], conf_f, log_f, data_f, args.verbose,
+        createConfig(args.year[0], conf_f, log_f, data_f, verbose,
                      numThreads, batchRows, args.host[0], port_d, args.database[0],
                      args.user[0], password)
         logging.info("Finished creation of the config file.")
