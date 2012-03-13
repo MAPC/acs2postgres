@@ -592,9 +592,9 @@ class ThreadFiles(threading.Thread):
         #it is very clear when looking the spread sheet.  
         col_seperators.insert(0, len(dict_cols["all"].keys())-1)
 
-        #self.createMetaTables(dict_cols)
-        #self.createTables(dict_cols, singleFile)
-        #self.insertTableData(dict_cols, singleFile, col_seperators)
+        self.createMetaTables(dict_cols)
+        self.createTables(dict_cols, singleFile)
+        self.insertTableData(dict_cols, singleFile, col_seperators)
         self.createViews(dict_cols, singleFile)
     
     def geoInsert(self, singleFile):

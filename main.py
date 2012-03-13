@@ -179,17 +179,19 @@ def unpackFiles(config_dict, j):
     queue.put(templateFile)
     queue.join()
 
-def putIntoDB(folder_dict, j, host, port, database, user, password, batchRows):
+def putIntoDB(folder_dict, j, host, port, database, user, password, batchRows, isDebug=False):
     queue = Queue.Queue()
     for i in range(j):
         t = ThreadFiles(queue, host, port, database, user, password, batchRows=batchRows)
         t.setDaemon(True)
         t.start()
     
-    for x in folder_dict.keys():
-        queue.put(folder_dict[x])
-    #queue.put(folder_dict[1])
-    #queue.put(folder_dict["geo0"])
+    if isDebug == False:
+        for x in folder_dict.keys():
+            queue.put(folder_dict[x])
+    else:
+        queue.put(folder_dict[1]) #use the first key
+        queue.put(folder_dict["geo0"]) #All geo files start with geoX base 0. 
     queue.join()
         
 def parseArgs(argv):
@@ -262,6 +264,10 @@ This defines the number of rows to batch before writing to the database. The
 more rows the faster the application can run but the more ram required. Tune
 this parameter to find the fastest speed for a particular computer. The default
 value is 200""")
+    parser.add_argument("--debug", default=False, action='store_true',  required=False, help="""
+Adding this flag will log at the debug level and only insert data from 1 e* and m* file and only
+1 geo file. This is to test everything to make sure it all works. This is NOT written to the
+config file and needs to be invoked EVERY time it is needed.""")
     cwd = os.getcwd()
     args = parser.parse_args()
     if args.createConfig == True:
@@ -326,11 +332,7 @@ value is 200""")
                      numThreads, batchRows, args.host[0], port_d, args.database[0],
                      args.user[0], password)
         logging.info("Finished creation of the config file.")
-    elif args.createConfig == True and args.year == -1:
-        log_f = "%s/acs.log" % cwd
-        if args.log != None:
-            log_f = args.log
-    elif args.createConfig == False:
+    else:
         conf_f = "%s/acs.conf" % cwd
         if args.conf != None:
             conf_f = args.conf[0]
@@ -365,12 +367,12 @@ value is 200""")
         if args.password != "":
             config_dict["password"] = args.password[0]
         
-        
+        if args.debug == True:
+            config_dict["verbose"] = 4
+            
         setupLog(config_dict["logFile"], config_dict["verbose"])
         
         logging.debug("The config_dict is: %s" % config_dict)
-        print config_dict
-        return
         logging.info("unpacking zip files")
         unpackFiles(config_dict, config_dict["j"])
         logging.info("finished unpacking zip files")
@@ -383,7 +385,8 @@ value is 200""")
         putIntoDB(folder_dict, config_dict["j"], 
                   config_dict["host"], config_dict["port"],
                   config_dict["database"], config_dict["user"], 
-                  config_dict["password"], config_dict["batch_rows"])
+                  config_dict["password"], config_dict["batch_rows"], 
+                  isDebug=args.debug)
         return
 
 def main(argv):
