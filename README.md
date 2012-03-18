@@ -30,11 +30,11 @@ for for this application to run.
 ##Basic running of the application on 2010 data
 * create a config file: python main.py --createConfig -y 2010 --host localhost --user userName 
 --password password --database databaseName --port portNumber -j numberOfThreads --batchRows batchRows
-    ** By default the config file is located in the current working directory. To specify a location, use the -c, --conf flag.
-    ** The -d, --data flag is used to specify the data directory where the downloaded zip files are located. 
+    * By default the config file is located in the current working directory. To specify a location, use the -c, --conf flag.
+    * The -d, --data flag is used to specify the data directory where the downloaded zip files are located. 
 * Look at the config file. Make sure that everything in the config file looks right and run the application.
 *To run the application type: python main.py
-    ** This will automatically read in the configuration settings and, if everything is correctly configured, it will
+    * This will automatically read in the configuration settings and, if everything is correctly configured, it will
 put the data into the specified database. 
 
 #Options for running the application
