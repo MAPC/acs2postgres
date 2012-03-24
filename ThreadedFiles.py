@@ -239,8 +239,13 @@ class ThreadFiles(threading.Thread):
         """
         x = 0
         for cell in line:
+            #print "X: %d ; Cell: %s ; Line[x]: %s" % (x, cell, line[x])
             if x in headerType.keys():
+                #if x == 45 or x == 44:
+                #    print x, cell, line[x], headerType[x]
+                
                 if len(cell) == 0:
+                    x = x + 1
                     #no information given about the data type, should assume string
                     continue
                 else:
@@ -264,11 +269,16 @@ class ThreadFiles(threading.Thread):
                         except ValueError:
                             ret = None
                     if ret == None:
-                        #We should never get here, but in case we do make the type a varchar
-                        #if the current guess is null, otherwise leave it alone
                         if headerType[x] == "integer" or headerType[x] == "float" or headerType[x] == "null": 
                             if len(cell.strip()) != 0:
                                 headerType[x] = "varchar(%s)" % len(cell)
+                        elif headerType[x].find("varchar") != -1:
+                            cur_length = headerType[x].strip(")").split("varchar(")[1]
+                            cur_length = int(cur_length)
+                            if len(cell) > cur_length:
+                                #print "Before: %s" % headerType[x]
+                                headerType[x] = "varchar(%s)" % len(cell)
+                                #print "After %s" % headerType[x]
             else:
                 if len(cell) == 0:
                     headerType[x] = "null"
@@ -291,9 +301,10 @@ class ThreadFiles(threading.Thread):
                         if len(cell.strip()) == 0:
                             headerType[x] = "null" #empty doesn't really give you a type, hope that it will eventually
                         else:
-                            headerType[x] = "varchar(%s)" % len(cell) 
+                            headerType[x] = "varchar(%s)" % len(cell)
             x = x + 1
         return headerType
+    
     
     def columnTypes(self, dict_cols, files):
         """
