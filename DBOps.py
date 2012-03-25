@@ -158,7 +158,7 @@ class DBOps():
                         #if passes an int test and the field is currently null make the field an int
                         ret = int(cell)
                         if headerType[x] == "null":
-                            headerType[x] = "integer"
+                            headerType[x] = "bigint"
                         #if it's an integer don't change it, if it's a float don't change it
                     except ValueError:
                         ret = None
@@ -168,12 +168,12 @@ class DBOps():
                             #if passes float but the curent deffinition is not a string (int or null only)
                             # change the type to a float
                             ret = float(cell)
-                            if headerType[x] == "integer" or headerType[x] == "null":
+                            if headerType[x] == "bigint" or headerType[x] == "null":
                                 headerType[x] = "float" 
                         except ValueError:
                             ret = None
                     if ret == None:
-                        if headerType[x] == "integer" or headerType[x] == "float" or headerType[x] == "null": 
+                        if headerType[x] == "bigint" or headerType[x] == "float" or headerType[x] == "null": 
                             if len(cell.strip()) != 0:
                                 headerType[x] = "varchar"
             else:
@@ -183,7 +183,7 @@ class DBOps():
                     ret = None
                     try:
                         ret = int(cell)
-                        headerType[x] = "integer"
+                        headerType[x] = "bigint"
                     except ValueError:
                         ret = None
                     
