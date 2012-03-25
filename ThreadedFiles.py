@@ -3,6 +3,8 @@ from psycopg2 import ProgrammingError
 import xlrd
 import threading
 import logging
+from DBOps import DBOps
+
 class Files():
     #seq_file = None denotes a geo file
     #add an assertion here 
@@ -80,34 +82,9 @@ class ThreadFiles(threading.Thread):
         """
         threading.Thread.__init__(self)
         self.queue = queue
-        self.db_host = db_host
-        self.db_port = db_port
-        self.db_database = db_database
-        self.db_user = db_user
-        self.db_pass = db_pass
+        self.myDBOpts = DBOps(db_host, db_port, db_database, db_user, db_pass)
         self.batchRows = batchRows
         self.col_re = re.compile(r"(?P<table_name>\w+)_(?P<col_name>\d+)")
-        
-    
-    def execute(self, cmd):
-        """
-        Execute the sql command
-        """
-        try:
-            conn = psycopg2.connect(host=self.db_host, database=self.db_database, user=self.db_user, password=self.db_pass)
-            cur = conn.cursor()
-            cur.execute(cmd)
-            conn.commit()
-        except Exception, e:
-            logging.error("A database operation failed. The error is: %s. \nThe command is: %s" % (e,cmd))
-            return None
-        
-        try:
-            ret = cur.fetchall()
-            return ret
-        except ProgrammingError:
-            return []
-        conn.close()
             
     def createTable(self, tableName, pk_head, unique_head, other_head):
         """
