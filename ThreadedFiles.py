@@ -348,7 +348,7 @@ class ThreadFiles(threading.Thread):
             if table_name == "all": continue
             logging.info("Dropping view %s" % table_name)
             cmd_str = "DROP VIEW %s;" % table_name
-            self.execute(cmd_str)
+            self.myDBOpts.execute(cmd_str)
             logging.info("creating view %s" % table_name)
             cmd_str = "CREATE OR REPLACE VIEW %s AS SELECT e.LOGRECNO as LOGRECNO, \n" % table_name
             for col in sorted(dict_cols[table_name].keys()):
