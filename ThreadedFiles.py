@@ -86,34 +86,6 @@ class ThreadFiles(threading.Thread):
         self.batchRows = batchRows
         self.col_re = re.compile(r"(?P<table_name>\w+)_(?P<col_name>\d+)")
             
-    
-    
-    def clean(self, text):
-        """
-        This takes a piece of text and cleans it for input into the
-        database.
-        """
-        if len(text) == 0:
-            return "NULL"
-        elif (text.strip() == '.'):
-            return "E'0'" #In the CSV files a 0 is represented by a '.', it should be 0
-        else:
-            text = text.replace("%", "\\%")
-            text = text.replace("'", "\\'")
-            return "E'%s'" % text
-    
-    def colName(self, text):
-        """
-        This will generate the a consistent and valid column name from text
-        """
-        try:
-            ret = int(text)
-            return ("_%s" % text)
-        except ValueError:
-            return(text)
-    
-    
-    
     def createMetaTables(self, dict_cols):
         """
         This creates the meta tables where the column name and
@@ -124,12 +96,12 @@ class ThreadFiles(threading.Thread):
             if (key == "all"): continue
             
             table = "%s_meta" % key
-            self.createTable( table, None, None, [("header", "varchar(10)"), ("description", "varchar(255)")] )
+            self.myDBOpts.createTable( table, None, None, [("header", "varchar(10)"), ("description", "varchar(255)")] )
             
             data = []
             for k in sorted(dict_cols[key].keys()):
                 data.append([k, dict_cols[key][k][0]])
-            self.insert(table, ["header", "description"], data)
+            self.myDBOpts.insert(table, ["header", "description"], data)
     
     def columnTypes(self, dict_cols, files):
         """
@@ -141,21 +113,18 @@ class ThreadFiles(threading.Thread):
         headerType = {}
         for e_file in files.e_files:
             f = open(e_file, "r")
-            line = f.readline()
+            x = 0
+            for line in f.readlines():
+                if x == 10: #The frsit 10 rows should contain enough data to make this realistic. 
+                    f.close()
+                    return headerType 
+                line = line.split(",")    
+                headerType = self.myDBOpts.colTypeFromArray(line, headerType)
+                x = x + 1
+                
             f.close()
-            line = line.split(",")
             
-            """
-            This is a bit confusing. The hirerarcy needs to be float -> int -> string
-            If in one file the column is an int but in another, that same column is a float,
-            the  column needs to be a float. The first file will be read into the 'else' section
-            and the subsequent files are in the "if" section. 
             
-            The 'else' section will go through and best guess the data type. The 'if' section
-            will change the datatype if the need arises. 
-            
-            """
-            headerType = self.myDBOpts.colTypeFromArray(line, headerType)
         return headerType
                 
     
@@ -182,7 +151,7 @@ class ThreadFiles(threading.Thread):
                 colType = colTypes[dict_cols[key][col][1]]
                 if colType == "null":
                     colType = "varchar(255)"
-                headers.append((self.colName(col), colType))
+                headers.append((self.myDBOpts.colName(col), colType))
                 
             self.myDBOpts.createTable( table, ok_head, None, headers )
             
@@ -193,7 +162,7 @@ class ThreadFiles(threading.Thread):
                 colType = colTypes[dict_cols[key][col][1]]
                 if colType == "null":
                     colType = "varchar(255)"
-                headers.append((self.colName(col), colType))
+                headers.append((self.myDBOpts.colName(col), colType))
             self.myDBOpts.createTable( table, ok_head, None, headers )
     
     def parseGeoLine(self, dict_lookup, line, strip=True):
@@ -249,7 +218,7 @@ class ThreadFiles(threading.Thread):
             geo_f = open(singleFile.geo_file)
             for line in geo_f.readlines():
                 line = self.parseGeoLine(dict_lookup, line, strip=False)
-                headerType = self.colTypeFromArray(line, headerType)
+                headerType = self.myDBOpts.colTypeFromArray(line, headerType)
             geo_f.close()
             
 
@@ -272,7 +241,7 @@ class ThreadFiles(threading.Thread):
         this data is much less complicated than the e* and m* data.
         """ 
         logging.debug("Pushing data")
-        self.insert(table, col_names, data)
+        self.myDBOpts.insert(table, col_names, data)
         logging.debug("Pushed data")
     
     def insertGeoDataFromFile(self, dict_cols, singleFile):
@@ -309,7 +278,7 @@ class ThreadFiles(threading.Thread):
             #column names for each table are defined as the second level of keys
             #from dict_cols. Make sure it is sorted to match the format the the data.
             for col_name in sorted(dict_cols[tableName].keys()):
-                col_names.append(self.colName(col_name))
+                col_names.append(self.myDBOpts.colName(col_name))
             logging.info("Inserting data to table: %s_%s" % (tableName, table_suffix))
             self.myDBOpts.insert("%s_%s" % (tableName, table_suffix), col_names, data[tableName] )
         logging.debug("Finishing pushing data")
@@ -383,7 +352,7 @@ class ThreadFiles(threading.Thread):
             logging.info("creating view %s" % table_name)
             cmd_str = "CREATE OR REPLACE VIEW %s AS SELECT e.LOGRECNO as LOGRECNO, \n" % table_name
             for col in sorted(dict_cols[table_name].keys()):
-                col_name = self.colName(col)
+                col_name = self.myDBOpts.colName(col)
                 cmd_str = "%se.%s as %s, m.%s as %s_error, \n" % (cmd_str, col_name, col_name, col_name, col_name)
             cmd_str = cmd_str.strip(", \n")
             cmd_str = "%s \nfrom %s_e e \njoin %s_m m on e.LOGRECNO = m.LOGRECNO;" % (cmd_str, table_name, table_name)

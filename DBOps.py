@@ -10,6 +10,30 @@ class DBOps():
         self.db_user = db_user
         self.db_pass = db_pass
     
+    def clean(self, text):
+        """
+        This takes a piece of text and cleans it for input into the
+        database.
+        """
+        if len(text) == 0:
+            return "NULL"
+        elif (text.strip() == '.'):
+            return "E'0'" #In the CSV files a 0 is represented by a '.', it should be 0
+        else:
+            text = text.replace("%", "\\%")
+            text = text.replace("'", "\\'")
+            return "E'%s'" % text
+    
+    def colName(self, text):
+        """
+        This will generate the a consistent and valid column name from text
+        """
+        try:
+            ret = int(text)
+            return ("_%s" % text)
+        except ValueError:
+            return(text)
+        
     def execute(self, cmd):
         """
         Execute the sql command
@@ -111,7 +135,7 @@ class DBOps():
         If the guess is currently float, but float fails to be parsed, convert to null 
         (this should rarely if ever happen)
         If guess is currently int but float passes, make the column a float
-        If int fails, make varchar(len(string))
+        If int fails, make varchar
         
         NOTE: for now only pass in non-zero length empty strings if working with
         column delineated data. This will not work with data if the first iteration
@@ -151,14 +175,7 @@ class DBOps():
                     if ret == None:
                         if headerType[x] == "integer" or headerType[x] == "float" or headerType[x] == "null": 
                             if len(cell.strip()) != 0:
-                                headerType[x] = "varchar(%s)" % len(cell)
-                        elif headerType[x].find("varchar") != -1:
-                            cur_length = headerType[x].strip(")").split("varchar(")[1]
-                            cur_length = int(cur_length)
-                            if len(cell) > cur_length:
-                                #print "Before: %s" % headerType[x]
-                                headerType[x] = "varchar(%s)" % len(cell)
-                                #print "After %s" % headerType[x]
+                                headerType[x] = "varchar"
             else:
                 if len(cell) == 0:
                     headerType[x] = "null"
@@ -181,7 +198,7 @@ class DBOps():
                         if len(cell.strip()) == 0:
                             headerType[x] = "null" #empty doesn't really give you a type, hope that it will eventually
                         else:
-                            headerType[x] = "varchar(%s)" % len(cell)
+                            headerType[x] = "varchar"
             x = x + 1
         return headerType
     
