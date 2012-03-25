@@ -314,8 +314,8 @@ class ThreadFiles(threading.Thread):
                     #There are many tables in a single CSV row.
                     data_line.append(e_line[col_idx].strip()) 
                     
-                logging.debug("table name %s: data_line length: %s, number of columns in table: %s" %
-                              ( table_name, len(data_line), len(dict_cols[table_name].keys())+1 ))
+                #logging.debug("table name %s: data_line length: %s, number of columns in table: %s" %
+                #              ( table_name, len(data_line), len(dict_cols[table_name].keys())+1 ))
                 #Append the data to correct specific table. This is done for each
                 #table defined by the column headers. We are still in the table_name for loop.
                 data[table_name].append(data_line)
