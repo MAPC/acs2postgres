@@ -4,7 +4,11 @@ Routine tasks to be executed before data is used to render MAPC's basemap.
 
 ## Usage
 
-Either directly edit `basemap.py` or add a `local_settings.py` to provice database connection parameters in form of:
+Install requirements:
+
+    $ pip install -r requirements.txt
+
+Either directly edit `basemap.py` or add a `local_settings.py` to provide database connection parameters in form of:
 
     HOST = 'localhost'
     DATABASE = 'database'
