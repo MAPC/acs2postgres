@@ -1,13 +1,18 @@
 import psycopg2
+from pprint import pprint
 
-# Default settings
-# checks for available local_settings with custom database connection parameters
 
-# Database connection parameters
+# Default database connection parameters
 HOST = 'localhost'
 DATABASE = 'database'
 USER = 'user'
 PASSWORD = 'password'
+
+# Check for local settings
+try:
+    from local_settings import *
+except ImportError:
+    pass
 
 
 def add_map_labels(table, labelfield):
@@ -57,17 +62,22 @@ def add_map_labels(table, labelfield):
                 break
             for i,orig_txt in row:
                 label = orig_txt.title()
+                label = label.replace("'S", "'s")
                 # use USPS abbrevations for road suffixes
                 if table == 'roads':
                     for k, v in USPS_abbr.items():
                         label = label.replace(k, v)
                 labels[label] = orig_txt
 
+        pprint(labels)
+        
         # update map_label_txt
+        print "updating rows..."
         cur.executemany("UPDATE " + table + " SET map_label_txt = %s WHERE " + labelfield + " = %s", labels.items())
 
         # commit transactions
         conn.commit()
+        print "done"
 
     except psycopg2.DatabaseError, e:
         print 'Error: %s' % e
@@ -76,11 +86,4 @@ def add_map_labels(table, labelfield):
     finally:
         if conn:
             conn.close()
-
-
-# Local settings
-try:
-    from local_settings import *
-except ImportError:
-    pass
 
