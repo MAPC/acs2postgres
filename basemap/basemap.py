@@ -33,6 +33,7 @@ def add_map_labels(table, labelfield):
         'Court': 'Ct',
         'Highway': 'Hwy',
         'Alley': 'Aly',
+        'Place': 'Pl',
     }
 
     conn = None
