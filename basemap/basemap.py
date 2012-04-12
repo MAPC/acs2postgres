@@ -55,12 +55,12 @@ def add_map_labels(table, labelfield):
             if row == []:
                 break
             for i,orig_txt in row:
-                label = orig_txt
+                label = orig_txt.title()
                 # use USPS abbrevations for road suffixes
                 if table == 'roads':
                     for k, v in USPS_abbr.items():
                         label = label.replace(k, v)
-                labels[label.title()] = orig_txt
+                labels[label] = orig_txt
 
         # update map_label_txt
         cur.executemany("UPDATE " + table + " SET map_label_txt = %s WHERE " + labelfield + " = %s", labels.items())
