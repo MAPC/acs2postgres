@@ -1,6 +1,8 @@
 # American Community Survey conversion script
 
-This application takes [American Community survey (ACS)](http://www.census.gov/acs/) data and inserts it into a database. This introduction will guide the user in how to setup
+This application takes [American Community survey (ACS)](http://www.census.gov/acs/) data and inserts it into a database. The data can be downloaded at
+[ftp://ftp.census.gov/acs2010_5yr/](ftp://ftp.census.gov/acs2010_5yr/). This is the 2010 5 year data. Other ACS data can be found by looking at the ACS folders
+under [ftp://ftp.census.gov/](ftp://ftp.census.gov/). This introduction will guide the user in how to setup
 the environment and a basic series of steps that should be performed in a specific order. Section 2 will go over what actions are
 performed and how. The last section will have some brief SQL statements that will be useful for creating additional
 views from the data.
@@ -157,6 +159,15 @@ be in order.
 This application will automatically generate its own config file. Generating the config file requires more
 parameters to be passed. All can be overridden when running the application. The config file can be generated once
 and stored with the parameters changed. The structure cannot be altered, however.
+
+# Database Structure
+Once the application has been successfully run, the database will be populated from all of the e* and m* files. The geography tables will be populated from the g* files. 
+
+There are many tables in the e* and m* files. If one chooses to inspect the e* and m* files one will find that the column names are of the format (table name)_(number). There can be many tables in the same file, each with their own number.
+
+This structure is put into the database as many tables structured as (table name)\_e, (table name)\_m and (table name)\_meta. The meta-table contains human readable column names for that particular table. For example it will map column \_001 to "Total...". The same thing, more or less, happens with the geofile. The script will also automatically create a view called (table name) which will alternate the e* columns and the m* columns with names (column name), (column name)\_error respectively. 
+
+*No other views are created automatically.*
 
 # Basic SQL
 

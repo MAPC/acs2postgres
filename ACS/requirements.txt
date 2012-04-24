@@ -1,0 +1,4 @@
+argparse
+ConfigParser
+psycopg2
+xlrd
