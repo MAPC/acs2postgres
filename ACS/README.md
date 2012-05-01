@@ -1,8 +1,8 @@
 # American Community Survey conversion script
 
-This application takes [American Community survey (ACS)](http://www.census.gov/acs/) data and inserts it into a database. The data can be downloaded at
-[ftp://ftp.census.gov/acs2010_5yr/](ftp://ftp.census.gov/acs2010_5yr/). This is the 2010 5 year data. Other ACS data can be found by looking at the ACS folders
-under [ftp://ftp.census.gov/](ftp://ftp.census.gov/). This introduction will guide the user in how to setup
+This application takes [American Community survey (ACS)](http://www.census.gov/acs/) data and inserts it into a database. Download [ACS 2010 5 year data](ftp://ftp.census.gov/acs2010_5yr/) or other ACS data which can be found by looking at the [ACS FTP folders](ftp://ftp.census.gov/). 
+
+This introduction will guide the user in how to setup
 the environment and a basic series of steps that should be performed in a specific order. Section 2 will go over what actions are
 performed and how. The last section will have some brief SQL statements that will be useful for creating additional
 views from the data.
@@ -201,138 +201,15 @@ of text as " " != "" and "A"!="a". This causes data to be prone to errors. If th
 create a new table and make an ID the primary key with a text value. The syntax of a join is:
   
     From Table 1 (table 1 alaias ex. t1)
-    JOIN Table2 (table 2 alias ex. t2) on t1.(key column) = t2.(key column)`  
+    JOIN Table2 (table 2 alias ex. t2) on t1.(key column) = t2.(key column)  
 
 A specific column can be refered to as (table 1 aliais).(column name) ex. t1.ID, t2.ID. For example, to select the 
 "ID" column from table 1 and 2, the "name" column from table 1 and the "date" column from table 2 run:
 
     SELECT t1.ID, t2.ID, t1.name, t2.date
     from Table1 t1
-    join Table2 t2 on t1.ID = t2.ID`
+    join Table2 t2 on t1.ID = t2.ID
    
-Much more complicated expressions can exist such as embedding a select statement into the join but 
-those are the basics.
+Much more complicated expressions can exist such as embedding a select statement into the join but the above commands provide basic functionality.
 
-## Code example
-  
-The case statement must be deterministic as well, so no variable aliasing is allowed. Take this 
-very nasty bit of code:
-
-    CASE
-    WHEN (e._011 + e._022) is NULL then -.99999
-
-    WHEN (e._003 + e._004 + e._005 + e._006 + e._007 + 
-    e._008 + e._009 + e._010 + e._011 + e._014 + 
-    e._015 + e._016 + e._017 + e._018 + e._019 + 
-    e._020 + e._021 + e._022) is NULL then -.99999
-
-    when (e._011 + e._022)=0 then 0
-
-    when (e._003 + e._004 + e._005 + e._006 + e._007 + 
-    e._008 + e._009 + e._010 + e._011 + e._014 + 
-    e._015 + e._016 + e._017 + e._018 + e._019 + 
-    e._020 + e._021 + e._022) = 0 then 0
-
-    when /* (1/OWNOCCV2) * SQRT(CB_50_ME^2-(CB_50^2/OWNOCCV2^2) * OWNOCCV2ME^2)*100 */
-    (power(m._011, 2) + power(m._022, 2)) 
-    > 
-    (
-    power(e._011 + e._022, 2) 
-    / 
-    power(e._003 + e._004 + e._005 + e._006 + e._007 + --OWNOCCV2^2
-    e._008 + e._009 + e._010 + e._011 + e._014 + 
-    e._015 + e._016 + e._017 + e._018 + e._019 + 
-    e._020 + e._021 + e._022, 2)
-    )*
-    (power(m._003, 2)+ power(m._004, 2)+ power(m._005, 2)+ power(m._006, 2)+ --OWNOCCV2ME^2
-    power(m._007, 2)+ power(m._008, 2)+ power(m._009, 2)+ power(m._010, 2)+
-    power(m._011, 2)+ power(m._014, 2)+ power(m._015, 2)+ power(m._016, 2)+
-    power(m._017, 2)+ power(m._018, 2)+ power(m._019, 2)+ power(m._020, 2)+
-    power(m._021, 2)+ power(m._022, 2)) 
-    then
-    (100.0/ (e._003 + e._004 + e._005 + e._006 + e._007 + 
-    e._008 + e._009 + e._010 + e._011 + e._014 + 
-    e._015 + e._016 + e._017 + e._018 + e._019 + 
-    e._020 + e._021 + e._022)) *
-
-    SQRT( (power(m._011, 2) + power(m._022, 2)) - 
-
-    (power(e._011 + e._022, 2) 
-    / 
-    power(e._003 + e._004 + e._005 + e._006 + e._007 + 
-    e._008 + e._009 + e._010 + e._011 + e._014 + 
-    e._015 + e._016 + e._017 + e._018 + e._019 + 
-    e._020 + e._021 + e._022, 2)) *
-
-    (power(m._003, 2)+ power(m._004, 2)+ power(m._005, 2)+ power(m._006, 2)+ --
-    power(m._007, 2)+ power(m._008, 2)+ power(m._009, 2)+ power(m._010, 2)+
-    power(m._011, 2)+ power(m._014, 2)+ power(m._015, 2)+ power(m._016, 2)+
-    power(m._017, 2)+ power(m._018, 2)+ power(m._019, 2)+ power(m._020, 2)+
-    power(m._021, 2)+ power(m._022, 2)))
-
-    else /* (1/OWNOCCV2) * SQRT(CB_ME^2+(CB^2/OWNOCCV2^2) * OWNOCCV2ME^2)*100 */
-    (100.0/ (e._003 + e._004 + e._005 + e._006 + e._007 + 
-    e._008 + e._009 + e._010 + e._011 + e._014 + 
-    e._015 + e._016 + e._017 + e._018 + e._019 + 
-    e._020 + e._021 + e._022)) *
-
-    SQRT( (power(m._011, 2) + power(m._022, 2)) + 
-
-    (power(e._011 + e._022, 2) 
-    / 
-    power(e._003 + e._004 + e._005 + e._006 + e._007 + 
-    e._008 + e._009 + e._010 + e._011 + e._014 + 
-    e._015 + e._016 + e._017 + e._018 + e._019 + 
-    e._020 + e._021 + e._022, 2)) *
-
-    (power(m._003, 2)+ power(m._004, 2)+ power(m._005, 2)+ power(m._006, 2)+ --
-    power(m._007, 2)+ power(m._008, 2)+ power(m._009, 2)+ power(m._010, 2)+
-    power(m._011, 2)+ power(m._014, 2)+ power(m._015, 2)+ power(m._016, 2)+
-    power(m._017, 2)+ power(m._018, 2)+ power(m._019, 2)+ power(m._020, 2)+
-    power(m._021, 2)+ power(m._022, 2)))
-
-    END as CB_50_ME_P
-
-Let's go over this (more or less) line by line. `CASE` defines the code block. 
-`WHEN (e._011 + e._022) is NULL then -.99999` describes that if either e._011 or e._022 is NULL then display
--.99999 as the value for that column.  This is the same thing for the next `WHEN` statement.
-  
-`when (e._011 + e._022)=0 then 0` will display 0 if both columns sum together to form 0 for a particular row. 
-The next when is analogous to this.
-
-The following code describes this equation: (1/OWNOCCV2) * SQRT(CB_50_ME^2-(CB_50^2/OWNOCCV2^2) * OWNOCCV2ME^2)*100
-
-    when /* (1/OWNOCCV2) * SQRT(CB_50_ME^2-(CB_50^2/OWNOCCV2^2) * OWNOCCV2ME^2)*100 */
-    (power(m._011, 2) + power(m._022, 2)) 
-    > 
-    (
-    power(e._011 + e._022, 2) 
-    / 
-    power(e._003 + e._004 + e._005 + e._006 + e._007 + --OWNOCCV2^2
-    e._008 + e._009 + e._010 + e._011 + e._014 + 
-    e._015 + e._016 + e._017 + e._018 + e._019 + 
-    e._020 + e._021 + e._022, 2)
-    )*
-    (power(m._003, 2)+ power(m._004, 2)+ power(m._005, 2)+ power(m._006, 2)+ --OWNOCCV2ME^2
-    power(m._007, 2)+ power(m._008, 2)+ power(m._009, 2)+ power(m._010, 2)+
-    power(m._011, 2)+ power(m._014, 2)+ power(m._015, 2)+ power(m._016, 2)+
-    power(m._017, 2)+ power(m._018, 2)+ power(m._019, 2)+ power(m._020, 2)+
-    power(m._021, 2)+ power(m._022, 2))`
-
-    This test is making sure that the square root is positive. The column names are defined in the rest of the table as:
-    * CB_50_ME^2: `(power(m._011, 2) + power(m._022, 2))`
-    * CB_50^2: `power(e._011 + e._022, 2)`
-    *OWNOCCV2^2: `power(e._003 + e._004 + e._005 + e._006 + e._007 + --OWNOCCV2^2
-      e._008 + e._009 + e._010 + e._011 + e._014 + 
-      e._015 + e._016 + e._017 + e._018 + e._019 + 
-      e._020 + e._021 + e._022, 2)`
-    * OWNOCCV2ME^2: `power(m._003, 2)+ power(m._004, 2)+ power(m._005, 2)+ power(m._006, 2)+ --OWNOCCV2ME^2
-      power(m._007, 2)+ power(m._008, 2)+ power(m._009, 2)+ power(m._010, 2)+
-      power(m._011, 2)+ power(m._014, 2)+ power(m._015, 2)+ power(m._016, 2)+
-      power(m._017, 2)+ power(m._018, 2)+ power(m._019, 2)+ power(m._020, 2)+
-      power(m._021, 2)+ power(m._022, 2)
- 
-Note though that the column names can not be used because the column names have not been created yet. All
-of the column names are created at the same time in the view. This is why this can get very complicated with
-complex column definitions and manipulations. The `then` statement is the actual function computed. Note the
-distinct lack of variables or aliases. 
+For a more advanced example of a view that contains margin of error fields, please see `b25091_view.sql`.
