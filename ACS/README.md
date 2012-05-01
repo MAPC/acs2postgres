@@ -1,6 +1,6 @@
 # American Community Survey conversion script
 
-This application takes [American Community survey (ACS)](http://www.census.gov/acs/) data and inserts it into a database. Download [ACS 2010 5 year data](ftp://ftp.census.gov/acs2010_5yr/) or other ACS data which can be found by looking at the [ACS FTP folders](ftp://ftp.census.gov/). 
+This application takes [American Community survey (ACS)](http://www.census.gov/acs/) data and inserts it into a database. Download [ACS 2010 5 year data](http://ftp.census.gov/acs2010_5yr/) or other ACS data which can be found by looking at the [ACS FTP folders](http://ftp.census.gov/). 
 
 This introduction will guide the user in how to setup
 the environment and a basic series of steps that should be performed in a specific order. Section 2 will go over what actions are
