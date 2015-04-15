@@ -44,7 +44,7 @@ class DBOps():
             cur.execute(cmd)
             conn.commit()
         except Exception, e:
-            logging.error("A database operation failed. The error is: %s. \nThe command is: %s" % (e,cmd))
+            logging.error("A database operation failed. The error is: %s" % (e))
             return None
         
         try:
@@ -54,7 +54,7 @@ class DBOps():
             return []
         conn.close()
         
-    def createTable(self, tableName, pk_head, unique_head, other_head):
+    def createTable(self, tbleName, pk_head, unique_head, other_head):
         """
         pk_head should be the form pk_name and is the primary key 
         column. If None, an id field is automatically created. The type should either be
@@ -69,13 +69,9 @@ class DBOps():
         if pk_head == None: pk_head = []
         if unique_head == None: unique_head = []
         if other_head == None: other_head = []
-        #print tableName, pk_head, unique_head, other_head
-        logging.info("Trying to drop table %s" % tableName)
-        if self.execute("DROP TABLE %s CASCADE;" % tableName) == None:
-            logging.error("Dropping table %s failed" % tableName)
-        else:
-            logging.info("dropped table %s" % tableName)
-        
+        tableName = "%s" % tbleName
+        self.execute("DROP TABLE IF EXISTS %s CASCADE;" % tableName)
+       
         cmd_str = "CREATE TABLE %s (" % tableName
         if len(pk_head) != 0:
             cmd_str = "%s %s %s primary key, " % (cmd_str, pk_head[0], pk_head[1])
@@ -95,22 +91,53 @@ class DBOps():
             cmd_str = cmd_str.rstrip(",")
             cmd_str = "%s ) " % cmd_str
         cmd_str = cmd_str.rstrip(" ,") + (");")
-        logging.info("Trying to create table: %s" % tableName)
-        if self.execute(cmd_str) == None:
-            logging.error("Failed to create table: %s" % tableName)
-        else: 
-            logging.info("Created table: %s" % tableName)
+        self.execute(cmd_str)
+        logging.info("Created table: %s" % tableName)
     
-    def insert(self, table, col_names=[], data=[] ):
+    def appendTable(self, tbleName, unique_head, other_head):
+        """
+        pk_head should be the form pk_name and is the primary key 
+        column. If None, an id field is automatically created. The type should either be
+        'serial' or 'integer'. DO NOT PK OFF OF A STRING.
+        
+        unique_head and other_head is of the form: (col name, type). Type can be any
+        valid db type. 
+        
+        unique_head is a list of unique key values. Note that id can be assumed to exist,
+        so long as pk_head contains id or is left blank.
+        """
+        if unique_head == None: unique_head = []
+        if other_head == None: other_head = []
+        tableName = "%s" % tbleName
+        cmd_str = "ALTER TABLE %s " % tableName
+        for h, t in unique_head:
+            cmd_str = "%s %s %s, " % (cmd_str, h, t)
+        
+        for h, t in other_head:
+            cmd_str = "%s ADD COLUMN %s %s, " % (cmd_str, h, t)
+        
+        if len(unique_head) != 0:
+            cmd_str = "%s UNIQUE( " % cmd_str
+            for h, t in unique_head:
+                cmd_str = "%s %s, " % (cmd_str, h)
+            cmd_str = cmd_str.rstrip(",")
+            cmd_str = "%s ) " % cmd_str
+
+        cmd_str = cmd_str.rstrip(" ,") + (";")
+        self.execute(cmd_str)
+        logging.info("Appended columns to table: %s" % tableName)
+
+    def insert(self, tble, col_names=[], data=[] ):
         """
         insert will run: insert into table (col_names) values data
         All of the data is wrapped in quotes and escaped. Postgeres is nice in that
         it allows numbers to be wrapped in quotes as still enter as a number if the column name.
         data needs to be in a matrix format with one entry for each column provided to col_names.
         """
+        table = "%s" % tble
         cmd_str = "INSERT INTO %s (" % table
         for col in col_names:
-            cmd_str = "%s%s, " % (cmd_str, col)
+            cmd_str = "%s%s, " % (cmd_str, col) # appends the column  without repeating the insert command
         cmd_str = cmd_str.rstrip(", ") + ") VALUES "
         
         for row in data:
@@ -119,12 +146,9 @@ class DBOps():
                 cmd_str = "%s%s, " % (cmd_str, self.clean(col))
             cmd_str = cmd_str.rstrip(", ") + "),\n"
         cmd_str =  cmd_str.rstrip(",\n") + ";" 
-        
-        logging.debug("Running insert cmd")
-        if self.execute(cmd_str) == None:
-            logging.error("Insert command failed")
-        logging.debug("Insert cmd succeeded")
-    
+
+        self.execute(cmd_str)
+
     def colTypeFromArray(self, line=[], headerType={}):
         """
         This will read each array object and try to determine the type.

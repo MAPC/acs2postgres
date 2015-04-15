@@ -3,7 +3,7 @@ from psycopg2 import ProgrammingError
 import xlrd
 import threading
 import logging
-from DBOps import DBOps
+from db_cmds import DBOps
 
 class Files():
     #seq_file = None denotes a geo file
@@ -16,7 +16,7 @@ class Files():
         self.geo_file = geo_file
     
     @classmethod
-    def createTupples(cls, state_name_lc, seq_folder, folders=[]):
+    def createTupples(cls, acs_year, state_name_lc, seq_folder, folders=[]):
         """
         * state_name_lc: This is the lower case state name. This is used
                          to construct the e* and m* file names.
@@ -29,12 +29,10 @@ class Files():
        This will generate the input dictionary for ThreadedFiles.run()
         """
         seq_re = re.compile(r"Seq(?P<id>\d+)\.xls")
-        e_re = re.compile(r"e(?P<year>\d+)%s%s(?P<id>\d+)\.txt" %
-                          ("5", state_name_lc))
-        m_re = re.compile(r"m(?P<year>\d+)%s%s(?P<id>\d+)\.txt" %
-                          ("5", state_name_lc))
-        g_re = re.compile(r"g(?P<year>\d+)%s%s\.txt" %
-                          ("5",state_name_lc))
+        e_re = re.compile(r"e(?P<year>\d+)%s%s(?P<id>\d+)\.txt" % (state_name_lc, acs_year))
+        m_re = re.compile(r"m(?P<year>\d+)%s%s(?P<id>\d+)\.txt" % (state_name_lc, acs_year))
+        g_re = re.compile(r"g(?P<year>\d+)%s%s\.txt" % (state_name_lc, acs_year))
+        
         seqs = os.listdir(seq_folder)
         folder_dict = {}
         geo = []
@@ -71,7 +69,7 @@ class ThreadFiles(threading.Thread):
     This class will take the output of Files.createTupples() and 
     insert data into the database.
     """
-    def __init__(self, queue, db_host, db_port, db_database, db_user, db_pass, batchRows=200):
+    def __init__(self, queue, db_host, db_port, db_database, db_user, db_pass, batchRows):
         """
         * queue: The shared threading queue
         * db_host: The database host
@@ -94,15 +92,35 @@ class ThreadFiles(threading.Thread):
         """        
         for key in dict_cols.keys():
             if (key == "all"): continue
-            
             table = "%s_meta" % key
-            self.myDBOpts.createTable( table, None, None, [("header", "varchar(10)"), ("description", "varchar(255)")] )
-            
-            data = []
-            for k in sorted(dict_cols[key].keys()):
-                data.append([k, dict_cols[key][k][0]])
-            self.myDBOpts.insert(table, ["header", "description"], data)
-    
+            DoesTblExist = None 
+            #cmd_str = "SELECT EXISTS (SELECT * from %s);" % table_name ## check if table exists
+            cmd_str = "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE  n.nspname = 'public' AND c.relname = '%s');" % table.lower()  
+            #logging.info("Meta table check is: %s" % table.lower())
+            DoesTblExist = self.myDBOpts.execute(cmd_str) #returns true if it does so data must be appended or false to create a new table
+
+            #logging.info("DoesTblExist %s" % DoesTblExist)
+            if DoesTblExist == [(False,)]: 
+                self.myDBOpts.createTable( table, None, None, [("header", "varchar(10)"), ("description", "text")] )
+                
+                data = []
+                for k in sorted(dict_cols[key].keys()):
+                    data.append([k, dict_cols[key][k][0]])
+                self.myDBOpts.insert(table, ["header", "description"], data)
+                
+            else: # if DoesTblExist = true - need to append
+                data = []
+                for k in sorted(dict_cols[key].keys()):
+                    data.append([k, dict_cols[key][k][0]])                    
+                    DoesColExist = None
+                    cmd_str = "SELECT EXISTS (SELECT %s FROM %s);" % (k, table.lower())
+                    logging.info( "SELECT EXISTS (SELECT %s FROM %s);" % (k, table.lower()))
+                    DoesColExist = self.myDBOpts.execute(cmd_str)  
+                    if DoesColExist == [(False,)]: 
+                       data.append([k, dict_cols[key][k][0]])
+
+                self.myDBOpts.insert(table, ["header", "description"], data)
+
     def columnTypes(self, dict_cols, files):
         """
         This will go through each of the e files and try to decern which db type
@@ -139,22 +157,32 @@ class ThreadFiles(threading.Thread):
         if "LOGRECNO" in dict_cols["all"].keys():
             ok_head = ("LOGRECNO", "integer")
         
-        colTypes = self.columnTypes(dict_cols, singleFile)
+        colTypes = self.columnTypes(dict_cols, singleFile) # returns a dict
         
-        for key in dict_cols.keys():
+        for key in sorted(dict_cols.keys()):
             if (key == "all"): continue
-            
+
+            ## run sql to check if table exists
+
             #create the e table
             table = "%s_e" % key
             headers = []
+            DoesTblExist = None 
+            #cmd_str = "SELECT EXISTS (SELECT * from %s);" % table_name ## check if table exists
+            cmd_str = "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE  n.nspname = 'public' AND c.relname = '%s');" % table.lower() 
+            DoesTblExist = self.myDBOpts.execute(cmd_str) #returns true if it does so data must be appended or false to create a new table
+
             for col in sorted(dict_cols[key].keys()): 
-                colType = colTypes[dict_cols[key][col][1]]
+                colType = colTypes[dict_cols[key][col][1]] # associates column type with column in a table
                 if colType == "null":
                     colType = "varchar(255)"
                 headers.append((self.myDBOpts.colName(col), colType))
-                
-            self.myDBOpts.createTable( table, ok_head, None, headers )
-            
+
+            if DoesTblExist == [(False,)]:     
+                self.myDBOpts.createTable(table, ok_head, None, headers ) # passes table name, primary key, None, headers array
+            else:
+                self.myDBOpts.appendTable(table, ok_head, None, headers )
+
             #create the m table
             table = "%s_m" % key
             headers = []
@@ -163,7 +191,11 @@ class ThreadFiles(threading.Thread):
                 if colType == "null":
                     colType = "varchar(255)"
                 headers.append((self.myDBOpts.colName(col), colType))
-            self.myDBOpts.createTable( table, ok_head, None, headers )
+
+            if DoesTblExist == [(False,)]:     
+                self.myDBOpts.createTable(table, ok_head, None, headers ) # passes table name, primary key, None, headers array
+            else:
+                self.myDBOpts.appendTable(table, ok_head, None, headers )
     
     def parseGeoLine(self, dict_lookup, line, strip=True):
         """This will parase a single line of text using the dict_lookup.
@@ -230,7 +262,7 @@ class ThreadFiles(threading.Thread):
             for header_idx in sorted(headerType.keys()):
                 if headers[header_idx] != "LOGRECNO":
                     if headerType[header_idx] == "null":
-                        other_head.append((headers[header_idx], "varchar(255)"))
+                        other_head.append((headers[header_idx], "text"))
                     else:
                         other_head.append((headers[header_idx], headerType[header_idx]))
             self.myDBOpts.createTable(tableName, pk_head, None, other_head)
@@ -240,9 +272,7 @@ class ThreadFiles(threading.Thread):
         A separate geo insert function is needed since
         this data is much less complicated than the e* and m* data.
         """ 
-        logging.debug("Pushing data")
         self.myDBOpts.insert(table, col_names, data)
-        logging.debug("Pushed data")
     
     def insertGeoDataFromFile(self, dict_cols, singleFile):
         data = []
@@ -270,18 +300,17 @@ class ThreadFiles(threading.Thread):
         because it will insert N rows into K tables where each
         table is defined in data.keys() and dict_cols.keys()
         """
-        logging.debug("Pushing data")
+        #logging.debug("Pushing data")
         #for every table defined in data, generate table specific column names
         for tableName in data.keys():
             col_names = []
-            col_names.append("LOGRECNO") #TODO: somehow make this not a static value
+            col_names.append("LOGRECNO")
             #column names for each table are defined as the second level of keys
             #from dict_cols. Make sure it is sorted to match the format the the data.
             for col_name in sorted(dict_cols[tableName].keys()):
                 col_names.append(self.myDBOpts.colName(col_name))
-            logging.info("Inserting data to table: %s_%s" % (tableName, table_suffix))
             self.myDBOpts.insert("%s_%s" % (tableName, table_suffix), col_names, data[tableName] )
-        logging.debug("Finishing pushing data")
+            logging.debug("Finished inserting data to table: %s_%s" % (tableName, table_suffix))
             
     def insertDataFromFile(self, file_handle, table_suffix, dict_cols, pk_index):
         """
@@ -302,7 +331,7 @@ class ThreadFiles(threading.Thread):
                 data = {} #Clear the data since it's now in the database
                 counter = 1 #reset the counter to make sure it doesn't get too big
             e_line = e_line.split(",") #generate array from each line in the CSV
-            for table_name in dict_cols.keys():
+            for table_name in sorted(dict_cols.keys()):
                 data_line = [e_line[pk_index]] #the 0 separator is assumed to be the pk index
                 if table_name == "all": continue #the all keyword is special and has in it only the shared columns
                 if table_name not in data.keys(): #if the table name doesn't exist in the data dictionary, create an array
@@ -338,16 +367,15 @@ class ThreadFiles(threading.Thread):
             e_file.close()
             m_file.close()
     
-    #TODO: Figure out a good way to put this into DBOps. Creating views is very
-    #easy but highly customizable. Think about a good way to go about doing that. 
+    #Creating views is very easy but highly customizable. 
     def createViews(self, dict_cols, singleFile):
         """
         Creates the default views for all of the e and m tables.
         """
         for table_name in dict_cols.keys():
             if table_name == "all": continue
-            logging.info("Dropping view %s" % table_name)
-            cmd_str = "DROP VIEW %s;" % table_name
+            #logging.info("Dropping view %s" % table_name)
+            cmd_str = "DROP VIEW IF EXISTS %s;" % table_name
             self.myDBOpts.execute(cmd_str)
             logging.info("creating view %s" % table_name)
             cmd_str = "CREATE OR REPLACE VIEW %s AS SELECT e.LOGRECNO as LOGRECNO, \n" % table_name
@@ -358,6 +386,7 @@ class ThreadFiles(threading.Thread):
             cmd_str = "%s \nfrom %s_e e \njoin %s_m m on e.LOGRECNO = m.LOGRECNO;" % (cmd_str, table_name, table_name)
             self.myDBOpts.execute(cmd_str)
     
+		
     def seqInsert(self, singleFile):
         """
         This is the main function when dealing with an e* or m* file.
@@ -389,7 +418,7 @@ class ThreadFiles(threading.Thread):
                 #maping csv and header information is non trivial. Multiple tables with a main
                 # make this a pain. Try to only work with say, 2000k inserts at a time. 
                 if m.group("table_name") not in dict_cols.keys():
-                    dict_cols[m.group("table_name")] = {}
+                    dict_cols[m.group("table_name")] = {} # gets the table_name varible set during init
                     col_seperators.append(col_idx)
                 dict_cols[m.group("table_name")][m.group("col_name")] = (sheet.cell(1, col).value, col_idx)
             col_idx = col_idx + 1
@@ -397,13 +426,11 @@ class ThreadFiles(threading.Thread):
         #The first seperator is the last column in the all section of the seq file, zero indexed.
         #If looking at the SeqX.xls file, this is the first k column headers, then the table names start
         #it is very clear when looking the spread sheet.  
-        col_seperators.insert(0, len(dict_cols["all"].keys())-1)
+        col_seperators.insert(0, len(dict_cols["all"].keys())-1) 
 
-        self.createMetaTables(dict_cols)
-        self.createTables(dict_cols, singleFile)
         self.insertTableData(dict_cols, singleFile, col_seperators)
         self.createViews(dict_cols, singleFile)
-    
+       
     def geoInsert(self, singleFile):
         #geo dict will have the format geo_dict[column name] = (description, start column) as a tupple
         #note that the PDF assumes a 1 index, python uses 0 so starting position is 0. 
@@ -481,7 +508,7 @@ class ThreadFiles(threading.Thread):
             singleFile = self.queue.get()
 
             if singleFile.seq_file != None:
-                self.seqInsert(singleFile)
+                self.seqInsert(singleFile)		
             elif singleFile.geo_file != None:
                 self.geoInsert(singleFile)
             self.queue.task_done()
