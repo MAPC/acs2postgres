@@ -1,16 +1,21 @@
-# American Community Survey import into PostGreSQL (python script)
+# American Community Survey data imported into PostGreSQL (python script)
 
-This application takes [American Community survey (ACS)](http://www.census.gov/acs/) data and inserts it into a postgres database. 
-Download ACS data (1, 3 or 5 year data) which can be found by looking at the [ACS FTP folders](http://www2.census.gov/).
-Unzip the data files and run the python script to insert the raw text files into a database. 
+The [American Community survey (ACS)](http://www.census.gov/acs/) data is released with numerous text and Excel files. It is divided up by release year(s) (1 year, 3 year average or 5 year average) and by state.
+
+The data is stored in comma separated text files without column headings, which are stored separately in excel files. This makes it very hard for the average user to locate specific information. 
+
+This python script takes the downloaded files for a state geography and release year(s) and loads them into a postgresql database, which can make it easier for someone who is familar with working acs data to query and access the data. An example in the database is for table b01002 which contains data for to median age. The database has b01002_e (estimates), b01002_m (margins of error) and b01002_meta (metadata which describes the column headings _001, _002 etc)
+
+To use this script you must download and unzip the ACS data and then run the script using python.
 
 This introduction will guide the user in how to setup
 the environment and a basic series of steps that should be performed in a specific order. 
 
-Assumptions: 	1. PostGreSQL database is installed with a user account that has permission to read, write and delete tables. 
-				2. Python is installed with the ability to install required libraries
-				3. Data zip files are downloaded from the Census website to a local (non-network drive) that the database can access.
-				4. This has only been tested in Windows computers.
+Assumptions: 	
+*  PostGreSQL database is installed with a user account that has permission to read, write and delete tables
+*  Python is installed with the ability to install required libraries
+*  Data zip files are downloaded from the Census website to a local (non-network drive) that the database can access.
+*  This is being runon a Windows computer.
 				
 Section 2 will go over what actions are performed and how. 
 The last section will have some brief SQL statements that will be useful for creating additional views from the data.
@@ -20,7 +25,7 @@ To see the help run:
     $ python main.py -h
 
 ## Initial setup
- 1. Download the data from Census website [ACS FTP folders](http://www2.census.gov/). This includes 2 or 3 zips files and an Excel (xls) file. 
+ 1. Download the ACS data (1, 3 or 5 year data) from the [ACS FTP folders](http://www2.census.gov/). This includes 2 or 3 zips files and an Excel (xls) file. 
     Save and unzip the data to a non-network drive. Example: C:\Python_ACS_code
  
 	5 year average ACS Downloads:
